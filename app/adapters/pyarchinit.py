@@ -24,16 +24,23 @@ from typing import Any, Dict, List, Optional
 
 from ..contract import (Slot, ToolDescriptor, ToolRegistry, ToolResult, invoke)
 
-#: What PyArchInit calls a thing → what EM calls it. Only the fields that have a
-#: meaning here; everything else rides along in `extra`.
+#: What PyArchInit calls a thing → the slot `create_su` declares.
+#:
+#: **Only what has a home.** PyArchInit distinguishes the short classification
+#: (`d_stratigrafica` "muro", `d_interpretativa` "fondazione") from the free
+#: text (`descrizione`, `interpretazione`), and only the free text has a field
+#: on a stratigraphic unit. The classifications are not dropped — they ride in
+#: `extra`, like everything else this adapter does not claim to understand.
+#:
+#: Corrected after measuring: the first version mapped `d_interpretativa` (the
+#: one-word classification) onto `interpretation` and the free text onto a slot
+#: name nobody declares, so the unit came back saying "fondazione" where the
+#: archaeologist had written a sentence. A mapping that looks plausible and is
+#: wrong is worse than one that carries a field verbatim.
 FIELD_MAP = {
     "us": "us",
-    "d_stratigrafica": "definition",
-    "d_interpretativa": "interpretation",
     "descrizione": "description",
-    "interpretazione": "reading",
-    "periodo_iniziale": "period_from",
-    "periodo_finale": "period_to",
+    "interpretazione": "interpretation",
 }
 
 #: The fields that identify WHERE the unit is. A number alone does not.

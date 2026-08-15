@@ -126,10 +126,22 @@ def test_a_pyarchinit_record_becomes_a_unit(node):
 
 def test_a_field_the_adapter_does_not_map_is_CARRIED_not_dropped():
     """Dropping somebody's data on the way in would make the graph a lossy copy
-    of their database."""
+    of their database.
+
+    Note WHICH fields are mapped, because the first version of this got it
+    wrong: PyArchInit keeps the short classification (`d_interpretativa`,
+    "fondazione") apart from the free text (`interpretazione`, a sentence), and
+    only the free text has a home on a stratigraphic unit. The classifications
+    ride in `extra` — carried verbatim rather than squeezed into a field that
+    means something else.
+    """
     slots = pyarchinit.slots_from_record(PYARCHINIT_RECORD)
     assert slots["description"] == "Due filari in opus mixtum."
-    assert slots["period_from"] == "1200"
+    assert slots["interpretation"] == "Portico, prima fase.", \
+        "the free text, not the one-word classification"
+    assert slots["extra"]["d_interpretativa"] == "fondazione"
+    assert slots["extra"]["d_stratigrafica"] == "muro"
+    assert slots["extra"]["periodo_iniziale"] == "1200"
     assert slots["extra"]["rapporti"] == '[["copre","13"]]'
     assert slots["extra"]["unita_misura"] == "cm"
 
@@ -196,3 +208,67 @@ def test_the_partners_do_not_disturb_the_MVP_routing(node):
     for intent, tool in before.items():
         assert after[intent] == tool, f"{intent} was stolen by {after[intent]}"
     assert registry.route("crea una nuova scheda").name == "create_su"
+
+
+# ── the partners' data lands WHOLE (the ARC-B limit, closed) ────────────────
+#
+# The adapters did not change: they were already passing description,
+# interpretation and the unmapped fields. What changed is the TOOL, which now
+# honours them — which is where the continuation belonged.
+
+def _unit(writer, node_id="US12"):
+    return next(n for n in writer._section(writer._read())["nodes"]
+                if n["id"] == node_id)
+
+
+def test_an_atrium_sheet_lands_WHOLE_not_only_its_number(node):
+    writer, _, registry = node
+    atrium.register(registry)
+    results = atrium.ingest_sheet(registry, ATRIUM_SHEET, ORCID,
+                                  recording=b"ID3\x04audio")
+    assert all(r.ok for r in results)
+
+    unit = _unit(writer)
+    assert unit["description"] == "Muro in opus mixtum, due filari conservati."
+    assert unit["data"]["interpretation"] == "Fondazione del portico, prima fase."
+    # …and the recording is still a resource, one click from the sentence
+    assert any(n.get("node_type") == "resource"
+               for n in writer._section(writer._read())["nodes"])
+
+
+def test_a_pyarchinit_record_lands_WHOLE_including_what_we_do_not_map(node):
+    writer, _, registry = node
+    pyarchinit.register(registry)
+    assert pyarchinit.ingest_record(registry, PYARCHINIT_RECORD, ORCID).ok
+
+    unit = _unit(writer)
+    assert unit["description"] == "Due filari in opus mixtum."
+    assert unit["data"]["interpretation"] == "Portico, prima fase."
+    assert unit["data"]["sito"] == "Saggio B" and unit["data"]["area"] == "1"
+    # the fields the adapter deliberately does not map are carried, not dropped
+    carried = unit["data"]["source_fields"]
+    assert carried["rapporti"] == '[["copre","13"]]'
+    assert carried["unita_misura"] == "cm"
+
+
+def test_the_adapters_themselves_did_not_have_to_change(node):
+    """The point of the arc: the continuation belonged in the tool. What the
+    adapters produce is unchanged — the same slots they always passed."""
+    slots = pyarchinit.slots_from_record(PYARCHINIT_RECORD)
+    assert {"us", "description", "interpretation", "extra"} <= set(slots)
+    sheet = atrium.slots_from_sheet(ATRIUM_SHEET)
+    assert {"us", "description", "interpretation"} <= set(sheet)
+
+
+def test_the_core_is_STILL_untouched_after_enriching_the_tool():
+    """The byte-for-byte guard, re-asserted where it matters most: this arc
+    enriched a TOOL, and a tool getting richer must not cost the base."""
+    before = Path(contract.__file__).read_bytes()
+    registry = build_registry(LocalWriter("/tmp/_probe2.em.json"),
+                              InMemoryAssetStore())
+    atrium.register(registry)
+    pyarchinit.register(registry)
+    contract.invoke(registry.route("create_su"),
+                    {"us": "1", "description": "d", "interpretation": "i",
+                     "extra": {"x": "1"}}, ORCID, registry=registry)
+    assert Path(contract.__file__).read_bytes() == before

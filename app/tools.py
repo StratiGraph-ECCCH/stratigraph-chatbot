@@ -77,16 +77,61 @@ def make_create_su(graph_writer) -> ToolDescriptor:
 
         # The library decides what a StratigraphicUnit IS. We ask it, then read
         # what it produced — rather than writing a dict shaped like one.
+        # `description` is the library's own field (the datamodel maps it to
+        # crm:P3_has_note), so it is passed to the CONSTRUCTOR and not bolted on.
         from s3dgraphy.graph import Graph
         from s3dgraphy.nodes import StratigraphicUnit
 
+        description = str(slots.get("description") or "").strip()
         scratch = Graph(graph_id="chatbot-scratch")
-        scratch.add_node(StratigraphicUnit(unit_id, name=f"US {number}"))
+        scratch.add_node(StratigraphicUnit(unit_id, name=f"US {number}",
+                                           description=description))
         made = next(n for n in scratch.nodes if n.node_id == unit_id)
 
         node = {"id": made.node_id, "node_type": made.node_type,
                 "name": made.name,
                 "data": {"created_by": author, "created_at": _now()}}
+        if made.description:
+            node["description"] = made.description
+
+        # ── the interpretation, and why it lives where it does ──────────────
+        #
+        # Measured first (the datamodel, not a guess): `description` exists on a
+        # stratigraphic unit; an INTERPRETATION does not — the `functional/telic`
+        # qualia are about function, which is a different claim.
+        #
+        # So the decision, taken deliberately and stated here so nobody has to
+        # rediscover it: a dictated interpretation is a **field note**, and it
+        # goes in `data["interpretation"]`. It is NOT made a PropertyNode,
+        # because a PropertyNode carries an evidence chain (source → extractor →
+        # property) and a sentence spoken into a microphone has none —
+        # manufacturing one would put a paradata chain in the graph that nobody
+        # built.
+        #
+        # One place, not two: this field is what somebody said in the trench;
+        # when that reading acquires evidence it becomes a property WITH its
+        # chain, and that is a different act, done at the desk.
+        interpretation = str(slots.get("interpretation") or "").strip()
+        if interpretation:
+            node["data"]["interpretation"] = interpretation
+
+        # ── everything the adapters carried and nobody mapped ───────────────
+        #
+        # PyArchInit's `rapporti`, its `unita_misura`, whatever ATRIUM adds next
+        # release. Kept under one key rather than spread across `data`, so a
+        # reader can always tell what this service UNDERSTOOD from what it
+        # merely carried. Dropping it would make the graph a lossy copy of
+        # somebody's database, which is the one thing an ingest must not be.
+        extra = slots.get("extra")
+        if isinstance(extra, dict) and extra:
+            node["data"]["source_fields"] = dict(extra)
+
+        # Where the record came from, when the caller knows: a unit number is
+        # only unique inside its area, and losing that makes two trenches one.
+        for key in ("sito", "area"):
+            value = slots.get(key)
+            if value not in (None, ""):
+                node["data"][key] = str(value).strip()
         process = _process_node("create_su", author, unit_id,
                                 f"US {number} creata a voce sul campo")
         delta = GraphDelta(nodes=[node], process=process, author=author)
@@ -107,7 +152,19 @@ def make_create_su(graph_writer) -> ToolDescriptor:
         name="create_su",
         intents=["crea una nuova scheda", "nuova scheda", "nuova unità",
                  "nuova us", "crea una us"],
-        input_schema=[Slot("us", "string", True, "il numero dell'unità")],
+        input_schema=[
+            Slot("us", "string", True, "il numero dell'unità"),
+            # Optional, all of them: a unit dictated in three words is still a
+            # unit. What the adapters carry, this now honours.
+            Slot("description", "string", False, "cosa c'è (crm:P3_has_note)"),
+            Slot("interpretation", "string", False,
+                 "cosa si pensa che sia — nota di campo, non ancora una "
+                 "property con la sua catena di evidenza"),
+            Slot("extra", "id", False,
+                 "i campi che l'adattatore non mappa: portati, non buttati"),
+            Slot("sito", "string", False, "il sito, quando il record lo dice"),
+            Slot("area", "string", False, "l'area: una US è unica dentro la sua"),
+        ],
         description="Una nuova unità stratigrafica nel grafo condiviso.",
         service="s3dgraphy", handler=handler)
 
