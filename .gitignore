@@ -1,0 +1,19 @@
+# local Claude Code tooling — never committed
+.claude/
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+
+# a field node's own data: the queue, the local container, the model files.
+# None of it belongs in the repository — the graph lives in the room and the
+# object store, and a model is downloaded on the node.
+data/
+*.sqlite
+models/
+
+.DS_Store

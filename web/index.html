@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>StratiGraph · assistente di campo</title>
+<!--
+  The field client (design note §6): a PWA, not a native app. ATRIUM is already
+  a web app, the ecosystem is web-first, and one codebase reaches phones and
+  tablets on both platforms with camera, microphone and GPS through the browser.
+  The heavy AI stays on the node; this stays thin.
+
+  Deliberately one file, no framework and no build step: it is served by the
+  Field Computing Node to a device on a trench's wifi, and every kilobyte and
+  every dependency is a thing that can fail three metres underground.
+-->
+<style>
+  :root { color-scheme: dark; --bg:#14161a; --panel:#1c1f26; --line:#2b303a;
+          --text:#e8eaee; --muted:#98a0ad; --accent:#e0a33a; --ok:#5fb87a;
+          --bad:#d1685f; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+         background:var(--bg); color:var(--text);
+         padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  header { padding:14px 16px; border-bottom:1px solid var(--line);
+           display:flex; align-items:baseline; gap:10px; }
+  h1 { font-size:16px; margin:0; font-weight:600; letter-spacing:.2px; }
+  .state { font-size:12px; color:var(--muted); margin-left:auto; }
+  .state.off { color:var(--bad); }
+  main { padding:16px; max-width:640px; margin:0 auto; }
+  /* Big targets: this is used with gloves on, standing in a trench. */
+  button { font:inherit; border:1px solid var(--line); background:var(--panel);
+           color:var(--text); border-radius:12px; padding:18px; width:100%;
+           margin-bottom:10px; cursor:pointer; text-align:left; }
+  button:active { background:#242833; }
+  button.primary { border-color:var(--accent); }
+  button[disabled] { opacity:.45; }
+  .row { display:flex; gap:10px; }
+  .row button { margin-bottom:0; }
+  input[type=text] { font:inherit; width:100%; padding:16px; border-radius:12px;
+                     border:1px solid var(--line); background:var(--panel);
+                     color:var(--text); margin-bottom:10px; }
+  .said { font-size:13px; color:var(--muted); margin:4px 0 12px; }
+  .answer { border:1px solid var(--line); border-left:4px solid var(--accent);
+            border-radius:10px; padding:14px; background:var(--panel);
+            margin-top:14px; }
+  .answer.ok { border-left-color:var(--ok); }
+  .answer.bad { border-left-color:var(--bad); }
+  .queue { font-size:12px; color:var(--muted); margin-top:14px; }
+  .hint { font-size:12px; color:var(--muted); }
+  img.shot { max-width:100%; border-radius:10px; margin-top:10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Assistente di campo</h1>
+  <span class="state" id="state">…</span>
+</header>
+<main>
+  <!-- The three gestures of the MVP, and nothing else on the screen. -->
+  <button class="primary" id="rec">🎙 Tieni premuto e parla</button>
+  <div class="row">
+    <button id="shoot">📷 Scatta</button>
+    <button id="where">📍 Dove sono</button>
+  </div>
+  <p class="hint" id="hint">Se il microfono non c'è, scrivi il comando qui sotto.</p>
+  <input type="text" id="typed" placeholder="crea una nuova scheda, US 12" enterkeyhint="send">
+  <button id="send">Manda</button>
+  <img class="shot" id="shot" hidden alt="">
+  <div class="said" id="said"></div>
+  <div class="answer" id="answer" hidden></div>
+  <div class="queue" id="queue"></div>
+</main>
+
+<input type="file" id="camera" accept="image/*" capture="environment" hidden>
+
+<script>
+// ── the node ────────────────────────────────────────────────────────────────
+// Same origin: this page is served BY the field node, so there is no host to
+// configure and nothing to get wrong on a phone somebody just handed you.
+const NODE = location.origin;
+// The token is kept in memory only — never in localStorage. A field device is
+// lent, dropped and borrowed; a token on its disk outlives the person holding it.
+let TOKEN = new URLSearchParams(location.search).get("token") || "";
+
+const $ = (id) => document.getElementById(id);
+const state = $("state"), answerBox = $("answer"), saidBox = $("said");
+
+function show(ok, message, detail) {
+  answerBox.hidden = false;
+  answerBox.className = "answer " + (ok ? "ok" : "bad");
+  answerBox.textContent = message + (detail ? ` (${detail})` : "");
+  // Read it out loud: the person hearing this has their hands in the soil.
+  try {
+    const say = new SpeechSynthesisUtterance(message);
+    say.lang = "it-IT";
+    speechSynthesis.speak(say);
+  } catch { /* no voice on this device: the text is still there */ }
+}
+
+// ── the queue ───────────────────────────────────────────────────────────────
+// Offline-first is the base case, not a fallback: a trench has no signal and
+// the node is on the surface. Anything that cannot be sent now is kept, in
+// order, and sent when the node answers again. Nothing is lost and nothing is
+// sent twice out of order.
+const QUEUE_KEY = "sg.queue.v1";
+const readQueue = () => JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]");
+const writeQueue = (q) => localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
+
+function renderQueue() {
+  const n = readQueue().length;
+  $("queue").textContent = n ? `${n} in coda, li mando appena torna il nodo.` : "";
+}
+
+async function post(path, body) {
+  const res = await fetch(NODE + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json",
+               ...(TOKEN ? { Authorization: "Bearer " + TOKEN } : {}) },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+async function send(path, body, describe) {
+  try {
+    const answer = await post(path, body);
+    show(answer.ok, answer.message, answer.tool || "");
+    return true;
+  } catch (err) {
+    const queue = readQueue();
+    queue.push({ path, body, at: Date.now(), describe });
+    writeQueue(queue);
+    renderQueue();
+    show(false, "Nodo non raggiungibile: l'ho messo in coda.", describe);
+    return false;
+  }
+}
+
+async function flush() {
+  const queue = readQueue();
+  if (!queue.length) return;
+  const left = [];
+  for (const item of queue) {
+    try { await post(item.path, item.body); }
+    catch { left.push(item); }          // still down: keep the ORDER
+  }
+  writeQueue(left);
+  renderQueue();
+  if (queue.length && !left.length) show(true, `Ho mandato ${queue.length} cose in coda.`);
+}
+
+// ── is the node there? ──────────────────────────────────────────────────────
+async function ping() {
+  try {
+    const res = await fetch(NODE + "/health", { cache: "no-store" });
+    const health = await res.json();
+    state.className = "state";
+    state.textContent = health.writes_to.startsWith("room") ? "nodo · stanza" : "nodo · locale";
+    flush();
+  } catch {
+    state.className = "state off";
+    state.textContent = "offline";
+  }
+}
+setInterval(ping, 8000);
+ping();
+renderQueue();
+addEventListener("online", flush);
+
+// ── speak ───────────────────────────────────────────────────────────────────
+// The browser's own recogniser when it has one (it is free and it is on the
+// device); the node's engine otherwise, by sending the recording. Either way
+// the sentence goes to the same route.
+let recognition = null;
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (SR) {
+  recognition = new SR();
+  recognition.lang = "it-IT";
+  recognition.interimResults = false;
+  recognition.onresult = (e) => {
+    const said = e.results[0][0].transcript;
+    saidBox.textContent = "Ho sentito: " + said;
+    send("/v1/say", { transcript: said }, said);
+  };
+  recognition.onerror = () => show(false, "Non ho sentito.");
+} else {
+  $("rec").disabled = true;
+  $("hint").textContent = "Questo browser non ascolta: scrivi il comando.";
+}
+$("rec").addEventListener("click", () => {
+  if (!recognition) return;
+  saidBox.textContent = "In ascolto…";
+  try { recognition.start(); } catch { /* already listening */ }
+});
+
+// ── type ────────────────────────────────────────────────────────────────────
+async function sendTyped() {
+  const said = $("typed").value.trim();
+  if (!said) return;
+  saidBox.textContent = "Ho letto: " + said;
+  $("typed").value = "";
+  await send("/v1/say", { transcript: said }, said);
+}
+$("send").addEventListener("click", sendTyped);
+$("typed").addEventListener("keydown", (e) => { if (e.key === "Enter") sendTyped(); });
+
+// ── shoot ───────────────────────────────────────────────────────────────────
+$("shoot").addEventListener("click", () => $("camera").click());
+$("camera").addEventListener("change", async () => {
+  const file = $("camera").files[0];
+  if (!file) return;
+  const shot = $("shot");
+  shot.src = URL.createObjectURL(file);
+  shot.hidden = false;
+  const base64 = await new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1]);
+    reader.readAsDataURL(file);
+  });
+  // Which unit? Whatever the last sentence said — and if it said none, the
+  // node refuses and SAYS so, which is better than this page guessing.
+  const us = (saidBox.textContent.match(/\b(\d{1,5})\b/) || [])[1] || "";
+  await send("/v1/photo", {
+    transcript: "questa foto è per la US " + us, us,
+    photo_base64: base64, filename: file.name,
+    media_type: file.type || "image/jpeg",
+  }, file.name);
+});
+
+// ── where ───────────────────────────────────────────────────────────────────
+$("where").addEventListener("click", () => {
+  send("/v1/say", { transcript: "in che progetto sto lavorando" }, "progetto");
+  navigator.geolocation?.getCurrentPosition(
+    (pos) => { saidBox.textContent =
+      `Qui: ${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`; },
+    () => { /* no fix: the answer above is still useful */ });
+});
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+</script>
+</body>
+</html>

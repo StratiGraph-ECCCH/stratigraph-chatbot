@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stratigraph-chatbot"
+version = "0.1.0.dev0"
+description = "The StratiGraph field assistant — an orchestrator: voice → intent → tool → a DTC-attributed write on the shared graph"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Emanuel Demetrescu", email = "emanuel.demetrescu@cnr.it" }]
+keywords = ["extended matrix", "archaeology", "assistant", "knowledge graph"]
+
+# Four lines, and the shape is the argument: this service orchestrates, it does
+# not own a domain. Everything it knows about stratigraphy comes from s3Dgraphy;
+# everything it knows about identity comes from the realm; the heavy AI (Whisper,
+# the LLM) runs on the Field Computing Node and is reached, not bundled.
+dependencies = [
+    "s3dgraphy>=1.6.0.dev13",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    # Auth is a hard dependency for the reason em-server states: a build that
+    # cannot verify a token comes up open, and this one WRITES to a shared graph.
+    "PyJWT[crypto]>=2.8",
+    # The device sends a recording and a photo in ONE request (that is how the
+    # gesture happens on a dig), so the multipart parser is not optional.
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+# The object store for photos. Optional the way it is in em-server: a single-node
+# FCN can keep them on a volume, and a build without the client must fail at
+# construction with a sentence rather than at the first upload.
+s3 = ["minio>=7.2"]
+# Speech-to-text ON THE NODE. Never a hard dependency: the assistant must run
+# headless, in a test, and against ATRIUM (which already hands over the text).
+stt = ["faster-whisper>=1.0"]
+dev = ["pytest>=7", "httpx>=0.27"]
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
