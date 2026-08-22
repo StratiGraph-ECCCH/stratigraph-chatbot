@@ -2,8 +2,11 @@
 
 `tests/test_contract.py` tests the contract's BEHAVIOUR and is untouched: it
 passed against the fork and it passes against the binding, which is the only
-evidence that mattered. What this file adds is the two things that behaviour
-cannot show — that the fork is *gone*, and that nothing already coined moved.
+evidence that mattered. What this file adds is what behaviour cannot show: that
+the fork is *gone* (not duplicated), that nothing already coined moved, that the
+Italian sentences did not drift now that they are a value passed to somebody
+else's function — and one claim the binding accidentally weakened over in
+`test_adapters.py`, re-made here in a way a binding cannot weaken.
 
 Why each one exists:
 
@@ -100,6 +103,40 @@ def test_the_four_refusals_are_word_for_word_what_they_were():
     broken = ToolDescriptor(name="atrium2", intents=["atrium2"], handler=boom)
     assert invoke(broken, {}, "0000-0001").message == \
         "«atrium2» non è riuscito: il servizio non risponde"
+
+
+# ── the reach the binding accidentally shrank ───────────────────────────────
+
+def test_the_adapters_still_reach_only_the_declared_surface():
+    """Recovers a claim the binding silently weakened, WITHOUT touching the test
+    that made it.
+
+    `test_adapters.py::test_the_adapters_use_ONLY_the_contracts_public_surface`
+    identifies what an adapter took from the contract by `value.__module__`. That
+    worked while the dataclasses were DEFINED here; now they are the core's, so
+    their `__module__` is `s3dgraphy.contract.core` and the same test sees one
+    name (`invoke`) where it used to see six. It still passes — and it still
+    forbids a private name — but its reach shrank, which is exactly the sort of
+    thing that goes unnoticed because nothing turns red.
+
+    So the same claim, measured by IDENTITY against what this module exports,
+    which a binding cannot weaken. (The oracle stays untouched; the one-line fix
+    over there, when somebody wants it, is to compare against `contract.__all__`
+    instead of `__module__`.)
+    """
+    from app.adapters import atrium, pyarchinit
+
+    public = set(contract.__all__)
+    for module in (atrium, pyarchinit):
+        took = {name for name in vars(module)
+                if name in public and vars(module)[name] is getattr(contract, name)}
+        assert {"Slot", "ToolDescriptor", "ToolRegistry", "ToolResult"} <= took, \
+            f"{module.__name__} took {sorted(took)}"
+        # …and nothing the binding keeps to itself: reaching for `_core_invoke`
+        # would be an adapter going around the sentences
+        for hidden in ("_core_invoke", "_core_stable_id"):
+            assert hidden not in vars(module), \
+                f"{module.__name__} reaches past the binding for {hidden}"
 
 
 def test_the_data_key_this_assistant_has_always_used_is_still_there():
