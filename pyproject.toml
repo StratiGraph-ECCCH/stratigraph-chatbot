@@ -17,6 +17,15 @@ keywords = ["extended matrix", "archaeology", "assistant", "knowledge graph"]
 # everything it knows about identity comes from the realm; the heavy AI (Whisper,
 # the LLM) runs on the Field Computing Node and is reached, not bundled.
 dependencies = [
+    # The floor stays at dev13 DELIBERATELY, and the reason is worth a line: since
+    # 2026-08-22 `app/contract.py` is a binding to `s3dgraphy.contract.core`, and
+    # that module landed *inside* the 1.6.0.dev14 line — after the bump. A pin
+    # cannot say "dev14 plus two commits", so raising it to dev14 would be a
+    # precision this file does not have: a dev14 wheel cut before the contract
+    # commits satisfies the pin and still lacks the module. What protects somebody
+    # is therefore an import-time check in `app/contract.py`, which names the fix
+    # in one sentence. Raise this to the first release that carries
+    # `s3dgraphy.contract` the day it is cut.
     "s3dgraphy>=1.6.0.dev13",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
