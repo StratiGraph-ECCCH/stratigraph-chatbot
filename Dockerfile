@@ -14,7 +14,7 @@ ARG S3DGRAPHY_SPEC="s3dgraphy>=1.6.0.dev13"
 WORKDIR /srv/stratigraph-chatbot
 
 COPY pyproject.toml README.md ./
-# PyJWT and minio are not behind a build arg, for em-server's reason: an image
+# PyJWT and minio are not behind a build arg, for StratiGraph Server's reason: an image
 # that cannot verify a token comes up open, and this one WRITES to a shared
 # graph; an image that cannot reach the store keeps photos in a process.
 RUN pip install --upgrade pip && \

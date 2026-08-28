@@ -67,7 +67,7 @@ voice commands, an accessibility artefact that doubles as the command spec.
 
 Two implementations of one seam, chosen by what the excavation has:
 
-* **room** (`EM_SERVER_URL` + `EM_CHATBOT_ROOM`) — the em-server room on the
+* **room** (`EM_SERVER_URL` + `EM_CHATBOT_ROOM`) — the StratiGraph Server room on the
   node. EMStudio joins the same room and sees the unit appear. *Convergence on
   the graph, not coupling*: the assistant is another client, exactly like
   EMStudio and EMtools;
@@ -105,7 +105,7 @@ Tests:
 | `OIDC_ISSUER` (or `TOKEN_ENDPOINT`), `OIDC_AUDIENCE` | Keycloak/ORCID. Half-configured → the process refuses to start |
 | `EM_SERVER_URL`, `EM_CHATBOT_ROOM`, `EM_CHATBOT_TOKEN` | the shared room. A room without a token is a startup refusal |
 | `EM_CHATBOT_CONTAINER`, `EM_CHATBOT_STUDY` | the node's own container, for the offline case |
-| `MINIO_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` / `_BUCKET` | the photos. **The same variables em-server reads** |
+| `MINIO_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` / `_BUCKET` | the photos. **The same variables StratiGraph Server reads** |
 | `EM_CHATBOT_WHISPER_MODEL` | speech on the node. Unset → the client sends the transcript (the ATRIUM case) |
 
 ## What is deliberately not here
@@ -115,6 +115,6 @@ Analysis, FBK Shape Recognition) — those are later slices, and the contract is
 ready for them. The real LLM and Whisper models — those are a deployment on the
 node. The US sheet-window in EMStudio — a different repository. Discovery.
 
-`app/auth.py` and `app/assets.py` are **deliberate copies** of em-server's, with
+`app/auth.py` and `app/assets.py` are **deliberate copies** of StratiGraph Server's, with
 the service name changed; at the third service they become a shared package.
 Stated here rather than discovered later.

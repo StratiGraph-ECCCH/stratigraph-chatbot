@@ -1,11 +1,11 @@
 """The photos — content-addressed, the same store the rest of the stack uses.
 
-Copied from em-server, deliberately and with the same reasoning: a field photo
+Copied from StratiGraph Server, deliberately and with the same reasoning: a field photo
 and a promoted 3D model are the same KIND of thing (bytes somebody will cite),
 so they get the same name (their sha256), the same bucket and the same guarantee
 — a reference a client can verify without asking anybody.
 
-**A deliberate duplicate.** Like `auth.py`, this is em-server's module with the
+**A deliberate duplicate.** Like `auth.py`, this is StratiGraph Server's module with the
 service name changed. At the third service it becomes a shared package; until
 then a change here is a change there, and the environment variables are the same
 names on purpose so one configuration serves both.
@@ -288,7 +288,7 @@ class MinioAssetStore:
 
 #: The MinIO settings, in the two spellings that exist in the wild: the client's
 #: own names (`MINIO_*`, what the dev-stack and MinIO's own docs use) and the
-#: em-server-prefixed ones the Ansible role writes. Read in this order, like
+#: StratiGraph Server-prefixed ones the Ansible role writes. Read in this order, like
 #: `auth.py` reads the issuer — one setting, two names, and a precedence, rather
 #: than two settings that will one day disagree.
 _MINIO_KEYS = {
@@ -318,7 +318,7 @@ def _minio_settings(env: Dict[str, str]) -> Optional[Dict[str, Any]]:
         raise RuntimeError(
             "the MinIO asset store is half configured: "
             f"{', '.join(sorted(given))} given, {', '.join(sorted(missing))} "
-            "missing. em-server will not fall back to a local directory the "
+            "missing. StratiGraph Server will not fall back to a local directory the "
             "operator did not ask for — set all four "
             "(MINIO_ENDPOINT / MINIO_ACCESS_KEY / MINIO_SECRET_KEY / "
             "MINIO_BUCKET) or none of them.")

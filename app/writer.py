@@ -10,7 +10,7 @@ assistant could only work when the desk application is running.
 Two implementations of one seam, and which one is used is a property of the
 excavation rather than a setting somebody chose:
 
-* **`RoomWriter`** — there is an em-server on the node. The delta goes onto the
+* **`RoomWriter`** — there is an StratiGraph Server on the node. The delta goes onto the
   wire as CRDT operations, and EMStudio sees the unit appear while the person
   who spoke it is still holding the trowel;
 * **`LocalWriter`** — there is no room (a trench with no network, a node not yet
@@ -156,14 +156,14 @@ class LocalWriter:
 
 
 class RoomWriter:
-    """An em-server room: what is written here appears in EMStudio, live.
+    """An StratiGraph Server room: what is written here appears in EMStudio, live.
 
     The delta becomes CRDT operations on the wire the ecosystem already speaks
     (WIRE 2 / ADR-002). Nothing about the protocol is invented here — this is a
     client, and being a client rather than a peer is the point of §5.
 
     **Declared limit, and it is honest rather than convenient:** the write path
-    below posts operations through em-server's HTTP surface. Joining the room's
+    below posts operations through StratiGraph Server's HTTP surface. Joining the room's
     WebSocket (P4.3, presence and live fan-out) is the next slice; a field node
     that writes and an editor that sees the write on its next refresh is already
     the useful half, and pretending to a real-time link we have not measured
@@ -208,7 +208,7 @@ class RoomWriter:
                         "source": edge["source"], "target": edge["target"],
                         "edge_type": edge.get("edge_type")})
         for op in ops:
-            # The author is NOT sent: em-server takes it from the token, and a
+            # The author is NOT sent: StratiGraph Server takes it from the token, and a
             # client-declared author is one nobody verified.
             answer = self._post(f"/v1/rooms/{self.room_id}/op", op)
             if answer is None:
