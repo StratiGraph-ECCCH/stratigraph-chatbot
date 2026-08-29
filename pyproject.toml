@@ -29,6 +29,12 @@ dependencies = [
     "s3dgraphy>=1.6.0.dev13",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
+    # The room's WIRE. `uvicorn[standard]` already pulls this in, and relying on
+    # that would be relying on somebody else's extra: the write path needs a
+    # WebSocket CLIENT (`websockets.sync.client`, 12+), which is a different
+    # reason from serving one. Declared so a build that drops the extra fails at
+    # install rather than at the first thing somebody says in a trench.
+    "websockets>=12",
     # Auth is a hard dependency for the reason StratiGraph Server states: a build that
     # cannot verify a token comes up open, and this one WRITES to a shared graph.
     "PyJWT[crypto]>=2.8",
