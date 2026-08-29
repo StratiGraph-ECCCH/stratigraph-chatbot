@@ -1,4 +1,4 @@
-"""The five MVP tools — the first clients of the contract.
+"""The six tools — the first clients of the contract.
 
 Grown from Elisa Dalla Longa's field card (design note §4): a thick forex card
 with colour-coded voice commands, an accessibility artefact that doubles as the
@@ -12,6 +12,12 @@ person says with their hands in the soil.
 | "questa foto è per la US 12" | `attach_photo_to_su` | bytes in the store, a resource on the unit |
 | "ti passo delle foto" | `ingest_photos` | bytes in the store, queued to a unit |
 | "cosa abbiamo registrato nel saggio B" | `query_kg` | nothing — it answers from the graph |
+| "costruisci il modello 3D di questa US" | `build_model` | the node reconstructs; a model and its provenance appear |
+
+The sixth is the newest and the odd one out: it is the only tool whose service
+is not this process. It ASKS the node (`/v1/photogrammetry`) and reads the answer
+back — which is what a voice should do with an act that takes minutes and needs
+an engine.
 
 **Every write goes through s3Dgraphy.** Not "mostly": the domain rule about what
 a stratigraphic unit is, and what a resource attached to one means, lives in the
@@ -341,15 +347,127 @@ def make_query_kg(graph_writer) -> ToolDescriptor:
         service="s3dgraphy", writes=False, handler=handler)
 
 
+# ── 6 · build_model ──────────────────────────────────────────────────────────
+
+def make_build_model(graph_writer, asset_store) -> ToolDescriptor:
+    """"costruisci il modello 3D di questa US dalle foto" — said out loud.
+
+    The voice does not reconstruct anything. It ASKS the node, which is the
+    whole point of the three layers: the meaning of the act is s3Dgraphy's, the
+    engine and the store are StratiGraph Server's, and what lives here is one
+    sentence turned into one request and one answer read back to somebody whose
+    hands are in the soil.
+
+    **It refuses off a room, and says why.** Reconstruction needs the engine and
+    the object store, both of which are the NODE's. A field assistant writing to
+    its own local container has photographs and no engine — telling somebody
+    "I'll build it" and silently doing nothing is the worst of the three
+    possible answers.
+
+    **It does not wait.** The engine takes minutes; a person standing over a
+    trench does not hold a phone to their ear for them. The tool reports the job
+    id, which is what the endpoint's 202 means. Asking «a che punto è il
+    modello» OUT LOUD is a tool of its own and is not built here — the poll is
+    `GET /v1/photogrammetry/{job_id}` for now, and saying otherwise would be
+    promising a sentence that does nothing.
+
+    `asset_store` is taken and not used, deliberately: every tool in this
+    registry has the same signature, and the photographs are ALREADY in the
+    node's store (that is what `ingest_photos` did). Staging them again from
+    here would upload the same bytes twice.
+    """
+
+    def handler(slots: Dict[str, Any], author: Optional[str]) -> ToolResult:
+        number = str(slots.get("us") or "").strip()
+        cluster = str(slots.get("cluster") or "").strip()
+        if not number and not cluster:
+            return ToolResult(ok=False,
+                              message="Di quale US devo costruire il modello?")
+        unit_id = f"US{number}" if number else ""
+        target = cluster or unit_id
+
+        room = getattr(graph_writer, "room_id", None)
+        caller = getattr(graph_writer, "call", None)
+        if not room or caller is None:
+            return ToolResult(
+                ok=False,
+                message="Da qui non posso: il modello lo costruisce il nodo, e "
+                        "questo assistente sta scrivendo sul contenitore locale. "
+                        "Collegati a una stanza e riprova.",
+                data={"reason": "no-room", "target": target})
+
+        mode = str(slots.get("mode") or "local").strip().lower()
+        payload: Dict[str, Any] = {"room_id": room, "cluster": target,
+                                   "mode": mode}
+        if unit_id:
+            payload["subject"] = unit_id
+        gcps = slots.get("gcps")
+        if gcps:
+            # a control set arrives as data (from a survey, an import), never
+            # dictated: pixels and coordinates are not things anybody says
+            payload["gcps"] = gcps
+            payload["mode"] = "absolute"
+
+        answer = caller("/v1/photogrammetry", payload)
+        if answer is None:
+            return ToolResult(
+                ok=False,
+                message="Non riesco a raggiungere il nodo. Le foto sono al "
+                        "sicuro: riprova quando torna la rete.",
+                data={"reason": "unreachable", "target": target})
+        if answer.get("detail"):
+            # the endpoint's own refusal, read out in its own words rather than
+            # replaced by a friendlier one that says less
+            return ToolResult(ok=False,
+                              message=f"Il nodo ha rifiutato: {answer['detail']}",
+                              data={"reason": "refused", "target": target,
+                                    "detail": answer["detail"]})
+
+        job_id = str(answer.get("job_id") or "")
+        count = int(answer.get("image_count") or 0)
+        where = ("georeferenziato" if payload["mode"] == "absolute"
+                 else "in coordinate locali")
+        # NOT promising a phrase that does nothing: asking «a che punto è il
+        # modello» out loud needs a tool of its own, and it is not this one. The
+        # job id is reported instead, which is what the node's own poll takes.
+        return ToolResult(
+            ok=True,
+            message=(f"Ho avviato la ricostruzione di {target} da {count} foto, "
+                     f"{where}. Ci vogliono alcuni minuti; il lavoro è "
+                     f"{job_id[:8]}."),
+            data={"job_id": job_id, "target": target, "room": room,
+                  "mode": payload["mode"], "image_count": count,
+                  "status": answer.get("status")})
+
+    return ToolDescriptor(
+        name="build_model",
+        intents=["costruisci il modello 3d", "costruisci il modello",
+                 "fai il modello 3d", "ricostruisci la us",
+                 "modello 3d di questa us", "modello dalle foto"],
+        input_schema=[Slot("us", "string", False, "il numero dell'unità"),
+                      Slot("cluster", "string", False,
+                           "l'acquisizione o la risorsa da cui partire"),
+                      Slot("mode", "string", False,
+                           "local (scala) o absolute (georeferenziato con GCP)"),
+                      Slot("gcps", "object", False,
+                           "i punti di controllo, se ci sono")],
+        description="Le foto già caricate diventano un modello 3D sul nodo, "
+                    "con la sua provenienza nel grafo.",
+        service="rest", handler=handler)
+
+
 # ── the five, registered ─────────────────────────────────────────────────────
 
 def build_registry(graph_writer, asset_store) -> ToolRegistry:
-    """The MVP registry. Adding a partner's capability is one more line here
-    plus a descriptor — which is the whole claim of the contract."""
+    """The registry. Adding a partner's capability is one more line here plus a
+    descriptor — which is the whole claim of the contract, and `build_model`
+    (2026-08-29) is the first time somebody else's capability was added by
+    exactly those two lines."""
     registry = ToolRegistry()
     registry.register(make_create_su(graph_writer))
     registry.register(make_which_project(graph_writer))
     registry.register(make_attach_photo(graph_writer, asset_store))
     registry.register(make_ingest_photos(graph_writer, asset_store))
     registry.register(make_query_kg(graph_writer))
+    registry.register(make_build_model(graph_writer, asset_store))
     return registry

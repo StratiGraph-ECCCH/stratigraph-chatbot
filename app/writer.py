@@ -199,6 +199,32 @@ class RoomWriter:
         except (urllib.error.URLError, OSError):
             return None
 
+    def call(self, path: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """One POST to the node's own API, with the token this session holds.
+
+        Exposed because a room is not only somewhere to write NODES: the
+        processing connector (`/v1/photogrammetry`) is a capability of the same
+        node, reached with the same identity and the same refusals. `None` means
+        the node could not be reached — the caller says so out loud rather than
+        pretending something is running.
+        """
+        return self._post(path, payload)
+
+    def read(self, path: str) -> Optional[Dict[str, Any]]:
+        """One GET, for polling a job the node is running."""
+        import urllib.error
+        import urllib.request
+
+        request = urllib.request.Request(
+            f"{self.base_url}{path}", method="GET",
+            headers={"Authorization": f"Bearer {self._token}"})
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as answer:
+                raw = answer.read()
+                return json.loads(raw) if raw else {}
+        except (urllib.error.URLError, OSError):
+            return None
+
     def apply(self, delta: GraphDelta) -> None:
         ops: List[Dict[str, Any]] = []
         for node in delta.nodes + ([delta.process] if delta.process else []):
