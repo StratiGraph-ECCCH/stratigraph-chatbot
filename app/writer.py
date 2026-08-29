@@ -414,6 +414,32 @@ def writer_from_env(environ: Optional[Dict[str, str]] = None) -> GraphWriter:
     local = LocalWriter(env.get("EM_CHATBOT_CONTAINER")
                         or "data/scavo.em.json",
                         study=env.get("EM_CHATBOT_STUDY") or "Scavo")
+
+    # A HANDOFF LINK is the way in now (`app/handoff.py`): one string, no
+    # credential, and the node signs in for itself. It wins over the split
+    # variables because it is the thing a person was HANDED — if both are set,
+    # the link is the more recent intention.
+    link = (env.get("EM_CHATBOT_HANDOFF") or "").strip()
+    if link:
+        from .handoff import HandoffError, parse as parse_handoff
+        try:
+            where = parse_handoff(link)
+        except HandoffError as exc:
+            raise RuntimeError(
+                f"EM_CHATBOT_HANDOFF is not a handoff link: {exc}") from None
+        token = (env.get("EM_CHATBOT_TOKEN") or "").strip()
+        if not token:
+            # Deliberately NOT signing in from here: `writer_from_env` is called
+            # at import on a node that may be headless, and opening a browser as
+            # a side effect of a module load is the kind of thing that hangs a
+            # service at boot. The sign-in belongs to the command that follows a
+            # link (`handoff.writer_from_link`), where a person is present.
+            raise RuntimeError(
+                "a handoff link is configured but no token: run the assistant's "
+                "sign-in (it follows the link and gets one), or set "
+                "EM_CHATBOT_TOKEN for a headless node.")
+        return RoomWriter(where["server"], where["room"], token, fallback=local)
+
     base = (env.get("EM_SERVER_URL") or "").strip()
     room = (env.get("EM_CHATBOT_ROOM") or "").strip()
     token = (env.get("EM_CHATBOT_TOKEN") or "").strip()
