@@ -3,57 +3,161 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F1EBE3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#2E2D2C" media="(prefers-color-scheme: dark)">
 <title>StratiGraph · assistente di campo</title>
+<link rel="icon" href="./brand/logo/favicon-deep-charcoal.svg" type="image/svg+xml">
 <!--
   The field client (design note §6): a PWA, not a native app. ATRIUM is already
   a web app, the ecosystem is web-first, and one codebase reaches phones and
   tablets on both platforms with camera, microphone and GPS through the browser.
   The heavy AI stays on the node; this stays thin.
 
-  Deliberately one file, no framework and no build step: it is served by the
-  Field Computing Node to a device on a trench's wifi, and every kilobyte and
-  every dependency is a thing that can fail three metres underground.
+  Deliberately no framework and no build step: it is served by the Field
+  Computing Node to a device on a trench's wifi, and every kilobyte and every
+  dependency is a thing that can fail three metres underground.
+
+  THE LOOK is the StratiGraph guidebook's (WP1), and it arrives as a VENDORED
+  theme — `brand/`, copied in by `sync-brand.sh` from `stratigraph-brand/`. Not a
+  CDN and not a fetch from the node: this has to be legible when the node is the
+  thing that is down. Every colour below is a role token from that file; there
+  is not one hex in this page.
 -->
+<link rel="stylesheet" href="./brand/stratigraph-theme.css">
 <style>
-  :root { color-scheme: dark; --bg:#14161a; --panel:#1c1f26; --line:#2b303a;
-          --text:#e8eaee; --muted:#98a0ad; --accent:#e0a33a; --ok:#5fb87a;
-          --bad:#d1685f; }
   * { box-sizing: border-box; }
-  body { margin:0; font:16px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-         background:var(--bg); color:var(--text);
-         padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
-  header { padding:14px 16px; border-bottom:1px solid var(--line);
-           display:flex; align-items:baseline; gap:10px; }
-  h1 { font-size:16px; margin:0; font-weight:600; letter-spacing:.2px; }
-  .state { font-size:12px; color:var(--muted); margin-left:auto; }
-  .state.off { color:var(--bad); }
-  main { padding:16px; max-width:640px; margin:0 auto; }
-  /* Big targets: this is used with gloves on, standing in a trench. */
-  button { font:inherit; border:1px solid var(--line); background:var(--panel);
-           color:var(--text); border-radius:12px; padding:18px; width:100%;
-           margin-bottom:10px; cursor:pointer; text-align:left; }
-  button:active { background:#242833; }
-  button.primary { border-color:var(--accent); }
-  button[disabled] { opacity:.45; }
-  .row { display:flex; gap:10px; }
-  .row button { margin-bottom:0; }
-  input[type=text] { font:inherit; width:100%; padding:16px; border-radius:12px;
-                     border:1px solid var(--line); background:var(--panel);
-                     color:var(--text); margin-bottom:10px; }
-  .said { font-size:13px; color:var(--muted); margin:4px 0 12px; }
-  .answer { border:1px solid var(--line); border-left:4px solid var(--accent);
-            border-radius:10px; padding:14px; background:var(--panel);
-            margin-top:14px; }
-  .answer.ok { border-left-color:var(--ok); }
-  .answer.bad { border-left-color:var(--bad); }
-  .queue { font-size:12px; color:var(--muted); margin-top:14px; }
-  .hint { font-size:12px; color:var(--muted); }
-  img.shot { max-width:100%; border-radius:10px; margin-top:10px; }
+  body {
+    margin: 0;
+    font: var(--sg-weight-body) 16px/1.55 var(--sg-font-sans);
+    background: var(--sg-bg);
+    color: var(--sg-text);
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  }
+
+  /* ── the header: the hourglass, who we are, whether the node answers ────── */
+  header {
+    display: flex; align-items: center; gap: var(--sg-space-3);
+    padding: var(--sg-space-4) var(--sg-space-4) var(--sg-space-3);
+    border-bottom: 1px solid var(--sg-line);
+  }
+  header img { width: 30px; height: 30px; flex: none; }
+  /* The mark is dark ink on the light ground and light ink on the dark one —
+     the guidebook ships both, so neither is a filter over the other. */
+  @media (prefers-color-scheme: dark) {
+    header img { content: url("./brand/logo/favicon-off-white.svg"); }
+  }
+  .brand { line-height: 1; }
+  .brand b {
+    font-family: var(--sg-font-display); font-weight: var(--sg-weight-headline);
+    font-size: var(--sg-text-lg); letter-spacing: .2px;
+  }
+  /* Sentence case. The guidebook's voice is quiet; SHOUTING IN CAPS is not it —
+     the one exception is this label, where the letter-spacing does the work of
+     a rule and the words are two. */
+  .brand span {
+    display: block; margin-top: 2px;
+    font-size: var(--sg-text-xs); color: var(--sg-accent-quiet);
+    letter-spacing: .6px;
+  }
+  .state {
+    margin-left: auto; text-align: right;
+    font-family: var(--sg-font-mono); font-size: var(--sg-text-xs);
+    color: var(--sg-muted);
+  }
+  .state.off { color: var(--sg-warn); }
+
+  main { padding: var(--sg-space-4); max-width: 640px; margin: 0 auto; }
+
+  /* ── the gestures. Big targets: used with gloves on, standing in a trench. ─ */
+  button {
+    font: inherit; width: 100%; margin-bottom: var(--sg-space-3);
+    padding: 18px; text-align: left; cursor: pointer;
+    background: var(--sg-surface); color: var(--sg-text);
+    border: 1px solid var(--sg-line); border-radius: var(--sg-radius);
+    box-shadow: var(--sg-shadow);
+  }
+  button:active { background: var(--sg-surface-sunk); }
+  button[disabled] { opacity: .45; box-shadow: none; }
+  /* The primary action is Burnt Orange — the guidebook's action colour, used
+     for the action and for nothing else on this screen.
+
+     AND ITS LABEL IS 19px/600, which is not a style choice. White on Burnt
+     Orange measures 3.53 (and Deep Charcoal on it, 3.89): both fail AA's 4.5
+     for normal text. At 19px semibold the label is WCAG "large text"
+     (>= 14pt bold), where the bar is 3:1 — which 3.53 clears. So the brand's
+     action colour keeps its job and the words stay readable, and the size is
+     right for a gloved hand anyway. Shrinking this label breaks the contrast;
+     that is why the number is here. */
+  button.primary {
+    background: var(--sg-accent); border-color: var(--sg-accent);
+    color: #FFFFFF; font-size: 19px; font-weight: 600;
+  }
+  button.primary:active { background: var(--sg-accent-quiet);
+                          border-color: var(--sg-accent-quiet); }
+  .row { display: flex; gap: var(--sg-space-3); }
+  .row button { margin-bottom: 0; }
+
+  input[type=text] {
+    font: inherit; width: 100%; padding: 16px;
+    margin-bottom: var(--sg-space-3);
+    background: var(--sg-surface); color: var(--sg-text);
+    border: 1px solid var(--sg-line); border-radius: var(--sg-radius);
+  }
+  input[type=text]::placeholder { color: var(--sg-muted); opacity: .7; }
+
+  .hint { font-size: var(--sg-text-sm); color: var(--sg-muted); margin: 0 0 var(--sg-space-2); }
+
+  /* What was heard, in the reader's own words — Clay Beige is the guidebook's
+     "the person's side" colour, and it is the one place it appears. */
+  .said {
+    /* A bubble on the reader's side, like the mockup's thread: right-aligned
+       and NOT full width, so the two voices are distinguishable at a glance
+       before a word is read. `margin-left:auto` rather than a flex row —
+       there is no row to make, and one line of CSS beats a wrapper element
+       the script would have to know about. */
+    max-width: 78%; margin: var(--sg-space-1) 0 var(--sg-space-3) auto;
+    width: fit-content;
+    font-size: var(--sg-text-sm); color: var(--sg-text);
+    padding: 10px 13px; border-radius: var(--sg-radius-lg);
+    border-bottom-right-radius: var(--sg-radius-sm);
+    background: color-mix(in srgb, var(--sg-quiet) 45%, transparent);
+  }
+  .said:empty { display: none; padding: 0; background: none; }
+
+  /* The node's answer: a card, with the state carried by the left rule rather
+     than by the whole surface — a wash of Soft Neon Green behind a sentence
+     would be unreadable (1.36 against Off-White, measured in the theme). */
+  .answer {
+    /* …and the node's side is a card, left, with the corner nearest the
+       speaker squared off — the mockup's asymmetry, which is what makes a
+       thread read as a conversation rather than as a list. */
+    max-width: 86%; width: fit-content;
+    background: var(--sg-surface); border: 1px solid var(--sg-line);
+    border-left: 4px solid var(--sg-info);
+    border-radius: var(--sg-radius);
+    border-bottom-left-radius: var(--sg-radius-sm);
+    padding: 14px;
+    margin-top: var(--sg-space-4); box-shadow: var(--sg-shadow);
+  }
+  .answer.ok  { border-left-color: var(--sg-ok); }
+  .answer.bad { border-left-color: var(--sg-warn); }
+
+  .queue {
+    font-family: var(--sg-font-mono); font-size: var(--sg-text-xs);
+    color: var(--sg-muted); margin-top: var(--sg-space-4);
+  }
+  .queue:empty { display: none; }
+
+  img.shot {
+    max-width: 100%; border-radius: var(--sg-radius);
+    margin-top: var(--sg-space-3); border: 1px solid var(--sg-line);
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1>Assistente di campo</h1>
+  <img src="./brand/logo/favicon-deep-charcoal.svg" alt="" width="30" height="30">
+  <div class="brand"><b>StratiGraph</b><span>assistente di campo</span></div>
   <span class="state" id="state">…</span>
 </header>
 <main>

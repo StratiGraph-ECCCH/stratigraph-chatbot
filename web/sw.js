@@ -5,10 +5,40 @@
 // one lie an assistant like this must not tell. What survives being offline is
 // the ability to WORK — the queue in the page holds what was said until the
 // node answers again.
-const SHELL = "sg-shell-v1";
+//
+// THE SHELL NOW INCLUDES THE BRAND, and that is the point of vendoring it. The
+// fetch handler below is cache-first, so the theme and the faces would end up
+// cached after the first online load anyway — but "after the first online load"
+// is exactly the case a trench does not offer. Precached, the assistant opens
+// looking like itself on a device that has never had signal.
+//
+// ~190 KB for eight woff2 and a stylesheet: the price of not depending on a
+// network, paid once, on a device that will spend its day without one.
+const SHELL = "sg-shell-v2";
+
+const SHELL_FILES = [
+  "/",
+  "/brand/stratigraph-theme.css",
+  "/brand/logo/favicon-deep-charcoal.svg",
+  "/brand/logo/favicon-off-white.svg",
+  "/brand/fonts/erode-latin-400-normal.woff2",
+  "/brand/fonts/erode-latin-500-normal.woff2",
+  "/brand/fonts/erode-latin-600-normal.woff2",
+  "/brand/fonts/ibm-plex-sans-latin-400-normal.woff2",
+  "/brand/fonts/ibm-plex-sans-latin-500-normal.woff2",
+  "/brand/fonts/ibm-plex-sans-latin-600-normal.woff2",
+  "/brand/fonts/ibm-plex-mono-latin-400-normal.woff2",
+  "/brand/fonts/ibm-plex-mono-latin-500-normal.woff2",
+];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(["/"])).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(SHELL)
+    // Individually, not `addAll`: that rejects the WHOLE install if one file is
+    // missing, and an assistant with no service worker at all is a worse
+    // outcome than one missing a font weight.
+    .then((c) => Promise.all(SHELL_FILES.map(
+      (f) => c.add(f).catch(() => undefined))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {

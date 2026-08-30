@@ -1,0 +1,129 @@
+"""The StratiGraph look, and the properties that keep it honest.
+
+Three claims, and each one has failed somewhere before:
+
+* **nothing is fetched at runtime.** The theme, the faces and the marks are
+  VENDORED (`sync-brand.sh`). A `<link>` to Google Fonts or to the node would
+  leave the assistant unstyled in a trench — which is the one place it has to
+  work — and the failure would be silent.
+* **the page uses ROLES, not hexes.** A colour written into the page is a colour
+  that will not follow the brand when the brand moves.
+* **the palette is the guidebook's.** Every hex in the theme is one the WP1
+  guidebook names, so "we invented a shade" cannot happen quietly.
+"""
+
+from __future__ import annotations
+
+import pathlib
+import re
+
+WEB = pathlib.Path(__file__).resolve().parent.parent / "web"
+PAGE = WEB / "index.html"
+THEME = WEB / "brand" / "stratigraph-theme.css"
+
+#: `StratiGraph_full_guidebook.pdf` (WP1), pages 5 and 7.
+GUIDEBOOK = {
+    "#F1EBE3", "#D9D1CF", "#383838", "#2E2D2C",      # core monochrome
+    "#C4B282", "#8A8021", "#A64724", "#E85B1A",      # earthy
+    "#CAD531", "#4AA7D9", "#1E275C",                 # digital accents
+}
+
+#: Not from the palette, and each one earns itself in the theme's own comments:
+#: two AA-safe inks for accents that cannot carry text, two dark-mode surfaces,
+#: and white.
+DERIVED = {"#1F5D78", "#5C6410", "#23262B", "#454545", "#FFFFFF"}
+
+
+def _hexes(text: str) -> set:
+    return {h.upper() for h in re.findall(r"#[0-9A-Fa-f]{6}\b", text)}
+
+
+def test_the_vendored_brand_is_there():
+    assert THEME.is_file(), "run ./sync-brand.sh"
+    fonts = sorted(p.name for p in (WEB / "brand" / "fonts").glob("*.woff2"))
+    assert len(fonts) == 8, fonts
+    for family in ("erode", "ibm-plex-sans", "ibm-plex-mono"):
+        assert any(f.startswith(family) for f in fonts), family
+    assert (WEB / "brand" / "logo" / "favicon-deep-charcoal.svg").is_file()
+
+
+def test_nothing_is_fetched_at_runtime():
+    """The property vendoring exists for. Measured on the page AND on the theme:
+    a CDN url in either one is a trench with no typeface."""
+    for path in (PAGE, THEME, WEB / "sw.js"):
+        source = path.read_text(encoding="utf-8")
+        # comments may NAME fontshare (the licence lives there); code may not
+        # reach it
+        code = re.sub(r"/\*.*?\*/|<!--.*?-->|^\s*//.*$", "",
+                      source, flags=re.S | re.M)
+        for host in ("fonts.googleapis.com", "fonts.gstatic.com",
+                     "api.fontshare.com", "cdn.fontshare.com",
+                     "cdn.jsdelivr.net", "unpkg.com"):
+            assert host not in code, f"{path.name} reaches {host}"
+
+
+def test_the_font_urls_are_relative_to_the_vendored_copy():
+    urls = re.findall(r'url\("([^"]+)"\)', THEME.read_text(encoding="utf-8"))
+    assert urls, "no @font-face src at all"
+    for url in urls:
+        assert url.startswith("./fonts/"), url
+
+
+def test_the_page_reaches_for_roles_and_not_for_hexes():
+    """Two exceptions, both real: `<meta name=theme-color>` cannot take a CSS
+    variable, and the ink on a filled control is white."""
+    page = PAGE.read_text(encoding="utf-8")
+    found = _hexes(page) | {h.upper() for h in re.findall(r"#[0-9A-Fa-f]{3}\b", page)}
+    assert found <= {"#F1EBE3", "#2E2D2C", "#FFFFFF"}, found
+    for hexed in ("#F1EBE3", "#2E2D2C"):
+        assert f'content="{hexed}"' in page, f"{hexed} outside a theme-color"
+    # …and it does use the roles
+    assert page.count("var(--sg-") > 40
+
+
+def test_every_colour_in_the_theme_is_the_guidebooks_or_declared_derived():
+    found = _hexes(THEME.read_text(encoding="utf-8"))
+    assert GUIDEBOOK <= found, f"missing from the theme: {GUIDEBOOK - found}"
+    invented = found - GUIDEBOOK - DERIVED
+    assert not invented, (
+        f"colours that are in neither the guidebook nor the declared derived "
+        f"set: {sorted(invented)}")
+
+
+def test_the_three_faces_are_the_guidebooks():
+    theme = THEME.read_text(encoding="utf-8")
+    assert '--sg-font-display: "Erode"' in theme
+    assert '--sg-font-sans:    "IBM Plex Sans"' in theme
+    assert '--sg-font-mono:    "IBM Plex Mono"' in theme
+    # Arial is the guidebook's OWN named substitute, not a generic fallback
+    assert '"Erode", Arial' in theme
+
+
+def test_the_primary_label_is_large_enough_for_its_own_contrast():
+    """White on Burnt Orange is 3.53 — below AA for normal text, above the 3:1
+    that applies to LARGE text. So the size is load-bearing, and shrinking it
+    silently breaks the contrast."""
+    page = PAGE.read_text(encoding="utf-8")
+    block = page[page.index("button.primary {"):]
+    block = block[:block.index("}")]
+    assert "font-size: 19px" in block and "font-weight: 600" in block, block
+
+
+def test_the_service_worker_precaches_the_brand():
+    """Cache-first would get there after the first ONLINE load, which is the
+    case a trench does not offer."""
+    worker = (WEB / "sw.js").read_text(encoding="utf-8")
+    assert "/brand/stratigraph-theme.css" in worker
+    assert worker.count("/brand/fonts/") == 8
+    assert "sg-shell-v2" in worker, "a new shell needs a new cache name"
+
+
+def test_the_dom_handles_the_script_needs_are_all_still_there():
+    """The restyle is GRAPHICS ONLY. Every id the script reaches for, and the
+    two state classes it sets."""
+    page = PAGE.read_text(encoding="utf-8")
+    for handle in ("state", "rec", "shoot", "where", "hint", "typed", "send",
+                   "shot", "said", "answer", "queue", "camera"):
+        assert f'id="{handle}"' in page, handle
+    for klass in (".answer.ok", ".answer.bad", ".state.off"):
+        assert klass in page, klass

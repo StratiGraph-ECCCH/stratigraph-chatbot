@@ -30,6 +30,8 @@ question anybody asks, and it deserves an answer that is one GET away.
 
 from __future__ import annotations
 
+import pathlib
+
 import base64
 from typing import Any, Dict, List, Optional
 
@@ -275,6 +277,18 @@ def service_worker() -> Any:
         raise HTTPException(status_code=404, detail="no service worker")
     return FileResponse(worker, media_type="application/javascript")
 
+
+# The BRAND, served beside the page that asks for it. Static files, no route of
+# their own: they are the vendored copy from `stratigraph-brand/` (see
+# `sync-brand.sh`), and the service worker precaches them so the assistant opens
+# looking like itself on a device that has never had signal.
+#
+# Mounted rather than listed one by one because the set is data, not code:
+# adding a font weight to the brand should not mean editing this file.
+_BRAND = pathlib.Path(__file__).resolve().parent.parent / "web" / "brand"
+if _BRAND.is_dir():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/brand", StaticFiles(directory=str(_BRAND)), name="brand")
 
 app.include_router(public)
 app.include_router(v1)
