@@ -96,8 +96,41 @@ class Health(BaseModel):
     asset_store: str = "memory"
     speech: str = "passthrough"
     intent_model: bool = False
+    #: Whether a dictation can be accepted AT ALL. False when no identity
+    #: provider is configured: the tools would refuse the write anyway ("Non
+    #: posso scrivere senza sapere chi sei"), so a field page that offered an
+    #: input box would be collecting words it could never attribute.
+    accepts_dictation: bool = True
+    #: …and when it cannot, WHAT IS IN THE WAY, by name. Empty otherwise.
+    missing: List[str] = Field(default_factory=list)
     #: The registry IS the documentation: what this node can do, by name.
     tools: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+def _identity_gaps() -> List[str]:
+    """What stands between this node and an ATTRIBUTABLE dictation, by name.
+
+    The habit this follows is the one `auth.py` set when it refuses to start on
+    a half-configured realm: say what is not there, rather than behave oddly.
+    A field page that meets a bare gate cannot tell «sign in» from «somebody
+    forgot a variable», and the person meeting it is standing in a trench.
+
+    Empty when this node enforces tokens — there is then nothing in the way.
+    """
+    settings = authenticator.settings
+    if getattr(settings, "enforcing", False):
+        return []
+    gaps: List[str] = []
+    if not getattr(settings, "issuer", ""):
+        gaps.append("OIDC_ISSUER (or TOKEN_ENDPOINT)")
+    if not getattr(settings, "audience", ""):
+        gaps.append("OIDC_AUDIENCE (or CLIENT_ID_em)")
+    if getattr(settings, "anon_declared", False):
+        # Not a missing variable — a declared one, and it is still in the way:
+        # an anonymous dictation has nobody to attribute.
+        gaps.append("EM_CHATBOT_ALLOW_ANON is on, and an anonymous dictation "
+                    "has no author")
+    return gaps
 
 
 def _health() -> Health:
@@ -108,6 +141,8 @@ def _health() -> Health:
         asset_store=asset_describe(ASSET_STORE),
         speech=stt_describe(STT),
         intent_model=INTENT_MODEL is not None,
+        accepts_dictation=bool(authenticator.settings.enforcing),
+        missing=_identity_gaps(),
         tools=[{"name": d.name, "intents": d.intents, "writes": d.writes,
                 "service": d.service} for d in REGISTRY.list()],
     )
@@ -123,6 +158,98 @@ def health_v1() -> Health:
     """Same answer as `/health`. A probe belongs to the infrastructure and must
     not have to be edited the day the API is versioned."""
     return _health()
+
+
+# ── how a browser signs in ────────────────────────────────────────────────────
+
+class AuthConfig(BaseModel):
+    """What a BROWSER needs to sign in against this node's realm.
+
+    Public by construction — an issuer and a client id are not secrets, and the
+    one thing that would be (a client secret) does not exist for this client: the
+    field page is a PUBLIC OIDC client and uses PKCE instead.
+
+    **Why this node answers it rather than the room server.** StratiGraph Server
+    exposes the same document, and behind Caddy it is one fetch away at
+    `/em/v1/auth-config`. Reaching for it would mean this page knowing that the
+    room server lives under `/em` — a second deployment fact, true today,
+    invisible when it stops being true, and wrong in the development loop where
+    the page is served bare at `:8020`. The page derives everything from its own
+    URL (`new URL(".", location.href)`); this route is what makes that enough.
+    The SHAPE is deliberately the room server's, field for field, so a client
+    that speaks to one speaks to the other.
+    """
+
+    #: the realm, e.g. `https://sso.example.org/realms/em`. Empty when this node
+    #: runs in dev-no-auth, and the page then SAYS so instead of offering a
+    #: sign-in that cannot work.
+    issuer: str = ""
+    #: the PUBLIC client the browser authenticates as
+    client_id: str = ""
+    #: where the IdP sends the browser back. Advertised so a deployment can be
+    #: read from one place, but the page computes its OWN from the document's
+    #: URL — it is served bare at `:8020/` and under `/chat/` behind the proxy —
+    #: and sends that. The two must agree with what the realm allows.
+    redirect_uri: str = ""
+    #: derived from the issuer the way Keycloak lays them out, for the reason
+    #: `auth.py` gives about the issuer and the JWKS: two URLs that must agree
+    #: are two URLs that will one day disagree.
+    authorization_endpoint: str = ""
+    token_endpoint: str = ""
+    #: the one that closes the shared-device trap. Without it "esci" only
+    #: forgets a token, and the next sign-in walks back in on Keycloak's cookie
+    #: as the previous person — a tablet that changes hands without changing
+    #: author.
+    end_session_endpoint: str = ""
+    scope: str = "openid profile email"
+    #: False when this node enforces nothing. The page then shows the gate with
+    #: the honest sentence — a node that cannot attribute must not be offered a
+    #: dictation box, because `contract.py` would refuse the write anyway.
+    enforcing: bool = False
+    #: When it is False, WHAT IS IN THE WAY, by name — the same list `/health`
+    #: publishes, from the same helper, so the gate and the probe cannot tell
+    #: two different stories. A bare gate leaves the person in front of it
+    #: unable to tell «sign in» from «somebody forgot a variable».
+    missing: List[str] = Field(default_factory=list)
+
+
+@public.get("/v1/auth-config", response_model=AuthConfig, tags=["meta"])
+def auth_config() -> AuthConfig:
+    """How a browser signs in to THIS node. No secret, by construction.
+
+    `EM_CHATBOT_CLIENT_ID` names the public client. It defaults to `em-console`,
+    which is the stack's existing PUBLIC browser client, rather than inventing a
+    second one: a realm object that does not exist yet produces a Sign in that
+    fails at the last step, and this stack already argues (in `auth.py`, about
+    the issuer and the JWKS) that two spellings of one thing are two things that
+    will disagree. A deployment that wants the field client to be its own realm
+    client sets the variable; what it must NOT be is `CLIENT_ID_em`, which is
+    confidential and does not do this flow.
+
+    Whichever client it is, the realm must list this page's URL among its valid
+    redirect URIs — bare at `:8020/` in development, `…/chat/` behind the node's
+    Caddy. That is configuration, not code.
+    """
+    import os
+
+    settings = authenticator.settings
+    issuer = str(getattr(settings, "issuer", "") or "")
+    client_id = os.environ.get("EM_CHATBOT_CLIENT_ID", "em-console").strip()
+    return AuthConfig(
+        issuer=issuer,
+        client_id=client_id if issuer else "",
+        redirect_uri=os.environ.get("EM_CHATBOT_REDIRECT_URI", "").strip(),
+        authorization_endpoint=(f"{issuer}/protocol/openid-connect/auth"
+                                if issuer else ""),
+        token_endpoint=(f"{issuer}/protocol/openid-connect/token"
+                        if issuer else ""),
+        end_session_endpoint=(f"{issuer}/protocol/openid-connect/logout"
+                              if issuer else ""),
+        scope=os.environ.get("EM_CHATBOT_SCOPE",
+                             "openid profile email").strip(),
+        enforcing=bool(getattr(settings, "enforcing", False)),
+        missing=_identity_gaps(),
+    )
 
 
 # ── the tools, declared ───────────────────────────────────────────────────────

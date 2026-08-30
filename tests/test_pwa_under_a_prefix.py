@@ -104,11 +104,17 @@ def test_the_api_is_refused_from_the_cache_UNDER_THE_PREFIX_TOO():
 
 
 def test_the_shell_cache_was_renamed_so_a_stale_one_is_dropped():
-    """The old cache holds entries keyed by absolute paths. `activate` deletes
-    every key that is not the current one, so the rename is what evicts them —
-    without it a device that had the app before would keep serving the old shell.
+    """The old cache holds the OLD PAGE — the worker is cache-first and `./` is
+    precached, so a device that had the app before would keep opening the shell
+    it already has. `activate` deletes every key that is not the current one, so
+    the rename is what evicts them, and bumping it is part of shipping a change
+    to the page rather than an afterthought.
+
+    v3 → v4: the page gained the signature gate. A device still serving v3 would
+    show the three gestures to somebody who has not signed — which is the exact
+    thing that change exists to prevent.
     """
-    assert 'const SHELL = "sg-shell-v3"' in WORKER
+    assert 'const SHELL = "sg-shell-v4"' in WORKER
 
 
 def test_the_page_still_works_at_the_ROOT_which_is_the_development_loop():

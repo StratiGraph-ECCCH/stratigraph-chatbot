@@ -14,7 +14,7 @@
 //
 // ~190 KB for eight woff2 and a stylesheet: the price of not depending on a
 // network, paid once, on a device that will spend its day without one.
-const SHELL = "sg-shell-v3";
+const SHELL = "sg-shell-v4";
 
 // WHERE THIS WORKER LIVES — `/` in development, `/chat/` behind the node's Caddy.
 //

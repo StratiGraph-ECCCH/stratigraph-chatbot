@@ -26,6 +26,9 @@
 <link rel="stylesheet" href="./brand/stratigraph-theme.css">
 <style>
   * { box-sizing: border-box; }
+  /* `hidden` is made to win in the THEME, not here: it is a thing all four
+     StratiGraph faces need, and this page is where the bug was found, not where
+     it belongs. See `[hidden]` in `brand/stratigraph-theme.css`. */
   body {
     margin: 0;
     font: var(--sg-weight-body) 16px/1.55 var(--sg-font-sans);
@@ -148,6 +151,39 @@
   }
   .queue:empty { display: none; }
 
+  /* ── the signature: who this device writes as, and how to hand it over ──
+     A strip of its own under the header rather than a third thing crammed into
+     it: on a phone held sideways in a trench the header already carries the
+     mark, the name and the node's state, and an ORCID is 19 characters. It also
+     reads as what it is — a signature line, the thing you check before you
+     dictate. */
+  .signature {
+    display: flex; align-items: center; gap: var(--sg-space-2);
+    padding: 9px var(--sg-space-4);
+    border-bottom: 1px solid var(--sg-line);
+    background: var(--sg-surface-sunk);
+    font-family: var(--sg-font-mono); font-size: var(--sg-text-xs);
+    color: var(--sg-muted);
+  }
+  .signature b {
+    font-family: var(--sg-font-sans); font-weight: 600;
+    font-size: var(--sg-text-sm); color: var(--sg-text);
+  }
+  /* The hand-over. Small on purpose — it must be reachable in seconds (the
+     tablet changes hands all day) and not reachable by a thumb steadying the
+     device. */
+  .signature button {
+    width: auto; margin: 0 0 0 auto; padding: 8px 13px;
+    font-size: var(--sg-text-xs); box-shadow: none;
+  }
+
+  /* ── the gate ─────────────────────────────────────────────────────────────
+     What stands where the three gestures are when nobody has signed. Not a
+     banner over a working page: the page does not work, and showing an input
+     that accepts dictation it could never attribute would be the worst lie to
+     put in the hands of somebody standing in a trench. */
+  #gate p { margin: 0 0 var(--sg-space-4); }
+
   img.shot {
     max-width: 100%; border-radius: var(--sg-radius);
     margin-top: var(--sg-space-3); border: 1px solid var(--sg-line);
@@ -160,18 +196,31 @@
   <div class="brand"><b>StratiGraph</b><span>assistente di campo</span></div>
   <span class="state" id="state">…</span>
 </header>
+<div class="signature" id="signature" hidden>
+  firmato <b id="who-name"></b> <span id="who-subject"></span>
+  <button id="signout">Esci</button>
+</div>
 <main>
+  <!-- Nobody has signed: this is the whole screen. -->
+  <section id="gate" hidden>
+    <p class="hint" id="gate-why"></p>
+    <button class="primary" id="signin" hidden>✍️ Firma per iniziare</button>
+  </section>
+
   <!-- The three gestures of the MVP, and nothing else on the screen. -->
-  <button class="primary" id="rec">🎙 Tieni premuto e parla</button>
-  <div class="row">
-    <button id="shoot">📷 Scatta</button>
-    <button id="where">📍 Dove sono</button>
-  </div>
-  <p class="hint" id="hint">Se il microfono non c'è, scrivi il comando qui sotto.</p>
-  <input type="text" id="typed" placeholder="crea una nuova scheda, US 12" enterkeyhint="send">
-  <button id="send">Manda</button>
-  <img class="shot" id="shot" hidden alt="">
-  <div class="said" id="said"></div>
+  <section id="work" hidden>
+    <button class="primary" id="rec">🎙 Tieni premuto e parla</button>
+    <div class="row">
+      <button id="shoot">📷 Scatta</button>
+      <button id="where">📍 Dove sono</button>
+    </div>
+    <p class="hint" id="hint">Se il microfono non c'è, scrivi il comando qui sotto.</p>
+    <input type="text" id="typed" placeholder="crea una nuova scheda, US 12" enterkeyhint="send">
+    <button id="send">Manda</button>
+    <img class="shot" id="shot" hidden alt="">
+    <div class="said" id="said"></div>
+  </section>
+
   <div class="answer" id="answer" hidden></div>
   <div class="queue" id="queue"></div>
 </main>
@@ -194,10 +243,90 @@
 // `new URL(".", href)` is the document's own directory: `http://host:8020/` in
 // development, `https://host:8443/chat/` behind the proxy. Same page, both
 // places, and nothing to configure.
-const NODE = new URL(".", location.href).href.replace(/\/+$/, "");
+const HERE = new URL(".", location.href).href;
+const NODE = HERE.replace(/\/+$/, "");
+
+// ── who is writing ──────────────────────────────────────────────────────────
+//
+// THE RULE THIS SECTION EXISTS FOR: no ingestion without an author. A card
+// dictated in a trench that enters the graph without saying who dictated it is
+// not a record with a field missing — it is a record nobody can use, because
+// attribution, embargo, licence and the whole DTC plan rest on who did what.
+// The node already refuses to write without an identity (`contract.py`:
+// "Non posso scrivere senza sapere chi sei"); this is the same rule made
+// visible, BEFORE somebody speaks into a form that could never keep it.
+//
+// The corollary, accepted: one device, one signed person at a time. A tablet
+// that changes hands does not become anonymous — it changes signature, and the
+// change has to cost seconds.
+//
+// The flow is Authorization Code + PKCE IN THE BROWSER, and deliberately not
+// the loopback dance the three native surfaces do (EMStudio, EMtools, the
+// chatbot process): those open a listener on 127.0.0.1 because they have no URL
+// of their own. A page has one, and it is its own. The shape below is the
+// node console's `app/node_admin/auth.js`, which does this already — read that
+// file for the long version of every comment here; it is not vendored because
+// this page has no build step and no imports on purpose.
+//
 // The token is kept in memory only — never in localStorage. A field device is
 // lent, dropped and borrowed; a token on its disk outlives the person holding it.
-let TOKEN = new URLSearchParams(location.search).get("token") || "";
+let TOKEN = "";
+//: who that token says is speaking: {subject, name}. `subject` is the ORCID —
+//: a public identifier, the very one that lands in the graph, which is why it
+//: may be written next to a queued note while the token may not.
+let WHO = null;
+//: how this node wants a browser to sign in (`GET /v1/auth-config`), or null.
+let AUTHCFG = null;
+
+// The SERVICE DOOR, kept on purpose: `?token=…` is how the smokes and the bench
+// drive this page without a person in front of Keycloak. It is not scrubbed off
+// the address bar the way an authorization code is, and that is a decision, not
+// an oversight: the whole convenience of the door is that the URL carries the
+// token, and a page that forgot it on reload would be a bench trick that works
+// once. It is therefore a HAZARD in a screenshot — which is exactly why it is a
+// bench door and not the way anybody signs.
+const SERVICE_TOKEN = new URLSearchParams(location.search).get("token") || "";
+
+// Where an ORCID lands in a Keycloak token, in the spellings a realm may use.
+// THE SAME LIST AND THE SAME ORDER as `ORCID_CLAIMS` in `app/auth.py`: the node
+// stamps the author from the token, this page only SHOWS it and files it beside
+// a queued note, and the two disagreeing would mean a queue held for a person
+// the node thinks is somebody else.
+const ORCID_CLAIMS = ["orcid", "orcid_id", "https://orcid.org/id",
+                      "preferred_username"];
+
+// The claims, read WITHOUT verifying the signature — display only, and it must
+// stay that way. Nothing here decides anything: the node checks the signature
+// against the realm's JWKS and takes the author from what it verified. A page
+// that trusted this would be a page you could talk into a name.
+function claimsOf(jwt) {
+  try {
+    const payload = String(jwt).split(".")[1];
+    const bytes = Uint8Array.from(
+      atob(payload.replace(/-/g, "+").replace(/_/g, "/")),
+      (c) => c.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes)) || {};
+  } catch { return {}; }
+}
+
+function subjectOf(claims) {
+  for (const key of ORCID_CLAIMS) {
+    const value = claims[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return claims.sub ? String(claims.sub) : "";
+}
+
+/** Adopt a token: this is the ONE place TOKEN is assigned from. */
+function adopt(token) {
+  TOKEN = token || "";
+  const claims = TOKEN ? claimsOf(TOKEN) : {};
+  WHO = TOKEN
+    ? { subject: subjectOf(claims),
+        name: claims.name || claims.preferred_username || subjectOf(claims) }
+    : null;
+  render();
+}
 
 const $ = (id) => document.getElementById(id);
 const state = $("state"), answerBox = $("answer"), saidBox = $("said");
@@ -214,6 +343,191 @@ function show(ok, message, detail) {
   } catch { /* no voice on this device: the text is still there */ }
 }
 
+// ── signing in ──────────────────────────────────────────────────────────────
+
+/** The redirect URI: this page's own directory, WITH its trailing slash.
+ *
+ *  Computed and never written down, for the same reason `NODE` is: the page is
+ *  served at `http://localhost:8020/` in development and at
+ *  `https://…:8443/chat/` behind the node's Caddy. Anything literal here would
+ *  be right in one place and wrong in the other — and a wrong redirect URI
+ *  fails at the IdP, far from the line that caused it. The realm has to list
+ *  both; when it does not, Keycloak says so at the last step and `signInReturn`
+ *  below surfaces that sentence rather than a code. */
+const redirectUri = () => HERE;
+
+async function loadAuthConfig() {
+  try {
+    const answer = await fetch(NODE + "/v1/auth-config",
+                               { headers: { Accept: "application/json" } });
+    return answer.ok ? await answer.json() : null;
+  } catch { return null; }
+}
+
+const canSign = () =>
+  Boolean(AUTHCFG && AUTHCFG.enforcing && AUTHCFG.authorization_endpoint
+          && AUTHCFG.client_id);
+
+// The verifier and the state have to survive the trip to Keycloak and back —
+// the page is unloaded in between — so they go in sessionStorage, which dies
+// with the tab. They are not credentials: they are use-and-throw, and the
+// verifier is DELETED the moment the code is exchanged. One left behind is a
+// spare key on the doormat.
+const PKCE_KEY = "sg.pkce" + location.pathname;
+
+function base64url(bytes) {
+  let text = "";
+  for (const byte of bytes) text += String.fromCharCode(byte);
+  return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function randomToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return base64url(bytes);
+}
+
+async function challengeFor(verifier) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256", new TextEncoder().encode(verifier));
+  return base64url(new Uint8Array(digest));
+}
+
+/** Leave for Keycloak. Does not return: the browser navigates away. */
+async function signIn() {
+  if (!canSign()) return;
+  const verifier = randomToken();
+  const state = randomToken();
+  sessionStorage.setItem(PKCE_KEY, JSON.stringify({ verifier, state }));
+  const url = new URL(AUTHCFG.authorization_endpoint);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("client_id", AUTHCFG.client_id);
+  url.searchParams.set("redirect_uri", redirectUri());
+  url.searchParams.set("scope", AUTHCFG.scope || "openid");
+  url.searchParams.set("code_challenge", await challengeFor(verifier));
+  url.searchParams.set("code_challenge_method", "S256");
+  url.searchParams.set("state", state);
+  location.assign(url.toString());
+}
+
+const returningFromIdp = () => {
+  const query = new URLSearchParams(location.search);
+  return query.has("code") || query.has("error");
+};
+
+/** Take `?code=…&state=…` off the address bar without reloading. An
+ *  authorization code in the address bar is a code in the browser history and
+ *  in every screenshot somebody takes of the screen. */
+function cleanUrl() {
+  history.replaceState({}, "", location.pathname);
+}
+
+/** Back from Keycloak: `?code=…` → a token in memory. */
+function fail(why) { show(false, "Firma non riuscita: " + why); render(); }
+
+async function signInReturn() {
+  const query = new URLSearchParams(location.search);
+  const code = query.get("code");
+  const error = query.get("error");
+  const returned = query.get("state");
+  let saved = null;
+  try {
+    const raw = sessionStorage.getItem(PKCE_KEY);
+    sessionStorage.removeItem(PKCE_KEY);   // consumed on read
+    saved = raw ? JSON.parse(raw) : null;
+  } catch { /* a tab with no storage: treated as no sign-in in progress */ }
+  cleanUrl();
+
+  if (error) return fail(query.get("error_description") || error);
+  if (!saved) return fail("questa scheda non aveva una firma in corso.");
+  // The one check that makes the round trip mean anything: a code delivered
+  // with somebody else's state is a code this tab did not ask for.
+  if (saved.state && returned !== saved.state) {
+    return fail("lo stato della firma non corrisponde: rifiuto un codice che "
+                + "questa scheda non ha chiesto.");
+  }
+  let payload = null;
+  try {
+    const answer = await fetch(AUTHCFG.token_endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: AUTHCFG.client_id,
+        code,
+        redirect_uri: redirectUri(),
+        code_verifier: saved.verifier,
+      }).toString(),
+    });
+    payload = await answer.json().catch(() => null);
+    if (!answer.ok) {
+      return fail(payload?.error_description || payload?.error
+                  || `Keycloak ha risposto ${answer.status}`);
+    }
+  } catch {
+    // The realm is reached by the BROWSER, not by the node, and behind a proxy
+    // those are two different machines. Saying which one failed is the
+    // difference between a fixable problem and a mystery.
+    return fail("non raggiungo Keycloak da questo dispositivo.");
+  }
+  adopt(payload.access_token || "");
+  if (!TOKEN) return fail("Keycloak non ha restituito un token.");
+}
+
+/** Sign OUT of the realm, not only of this tab.
+ *
+ *  THE TRAP THIS CLOSES, and the reason the whole file exists: if "esci" merely
+ *  forgot the token, the next touch on "firma" would bounce off Keycloak, find
+ *  its session COOKIE still valid, and walk back in silently AS THE PREVIOUS
+ *  PERSON. The tablet would change hands without changing author and nobody
+ *  would see it. So the browser goes through `end_session_endpoint` first, and
+ *  the page comes back unsigned because it comes back fresh. */
+function signOut() {
+  TOKEN = ""; WHO = null;
+  if (AUTHCFG && AUTHCFG.end_session_endpoint && AUTHCFG.client_id) {
+    const url = new URL(AUTHCFG.end_session_endpoint);
+    url.searchParams.set("client_id", AUTHCFG.client_id);
+    url.searchParams.set("post_logout_redirect_uri", redirectUri());
+    location.assign(url.toString());
+    return;
+  }
+  // No end-session endpoint: this tab is clean, and we SAY that the realm's
+  // session is not — better a sentence than a silent half-logout.
+  render();
+  show(false, "Uscito da questo dispositivo. Il nodo non espone un logout del "
+              + "realm, quindi la sessione di Keycloak può essere ancora aperta.");
+}
+
+// ── what the screen shows ───────────────────────────────────────────────────
+function render() {
+  const signed = Boolean(TOKEN);
+  $("work").hidden = !signed;
+  $("gate").hidden = signed;
+  $("signature").hidden = !signed;
+  if (signed) {
+    $("who-name").textContent = WHO?.name || "—";
+    $("who-subject").textContent = WHO?.subject ? "· " + WHO.subject : "";
+  } else {
+    $("signin").hidden = !canSign();
+    $("gate-why").textContent = canSign()
+      ? "Firma con la tua identità: quello che detti entra nel grafo a tuo nome."
+      : (AUTHCFG
+         // A bare gate cannot be told apart from a forgotten variable, and the
+         // person meeting it is standing in a trench. So the node NAMES what is
+         // in the way (`missing`, the same list `/health` publishes) and the
+         // gate repeats it — the habit `auth.py` set when it refuses to start
+         // on a half-configured realm rather than behaving oddly.
+         ? "Questo nodo non chiede la firma, quindi non può attribuire a "
+           + "nessuno quello che diresti: le dettature verrebbero rifiutate."
+           + (AUTHCFG.missing?.length
+              ? " Manca: " + AUTHCFG.missing.join(" · ") + "."
+              : "")
+         : "Non riesco a chiedere al nodo come si firma. Senza firma non posso "
+           + "accettare dettature, perché nessuno potrebbe esserne l'autore.");
+  }
+  renderQueue();
+}
+
 // ── the queue ───────────────────────────────────────────────────────────────
 // Offline-first is the base case, not a fallback: a trench has no signal and
 // the node is on the surface. Anything that cannot be sent now is kept, in
@@ -223,9 +537,55 @@ const QUEUE_KEY = "sg.queue.v1";
 const readQueue = () => JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]");
 const writeQueue = (q) => localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
 
+// EVERY QUEUED NOTE CARRIES WHO DICTATED IT, stamped at the moment it was
+// dictated. Without that: a note queued by Anna at 10:00 and sent at 14:00,
+// when Marco is the one signed on the tablet, becomes a note BY MARCO — and the
+// node cannot notice, because it takes the author from the token it sees and
+// does the right thing with the wrong fact.
+//
+// The subject is an ORCID, which is not a credential: it is the public
+// identifier that will end up in the graph anyway. So it may sit on disk beside
+// the note. The token may not, and does not.
+const isMine = (item, subject) => Boolean(subject) && item.subject === subject;
+
+//: A note dictated before signatures existed on this device. It is not sent and
+//: it is not silently re-attributed — both would be worse than waiting.
+const UNSIGNED = "\u0000unsigned";
+
+/** Which notes may go now, and which wait for whom. Pure, and named, because it
+ *  is the whole of design note §3.2 and a rule worth stating is a rule worth
+ *  running in a test. */
+function partitionQueue(queue, subject) {
+  const mine = [], held = [];
+  for (const item of queue) (isMine(item, subject) ? mine : held).push(item);
+  return { mine, held };
+}
+
+/** The held notes, counted by the person waiting for them. */
+function heldBy(held) {
+  const counts = new Map();
+  for (const item of held) {
+    const label = item.by || item.subject || UNSIGNED;
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  return [...counts.entries()];
+}
+
+function queueSentence(queue, subject) {
+  const { mine, held } = partitionQueue(queue, subject);
+  const lines = [];
+  if (mine.length) lines.push(`${mine.length} in coda, li mando appena torna il nodo.`);
+  for (const [label, n] of heldBy(held)) {
+    const noun = n === 1 ? "nota" : "note";
+    lines.push(label === UNSIGNED
+      ? `${n} ${noun} senza firma, dettate prima che la firma esistesse: restano in coda.`
+      : `${n} ${noun} di ${label} in attesa che rientri.`);
+  }
+  return lines.join(" ");
+}
+
 function renderQueue() {
-  const n = readQueue().length;
-  $("queue").textContent = n ? `${n} in coda, li mando appena torna il nodo.` : "";
+  $("queue").textContent = queueSentence(readQueue(), WHO?.subject || "");
 }
 
 async function post(path, body) {
@@ -246,7 +606,8 @@ async function send(path, body, describe) {
     return true;
   } catch (err) {
     const queue = readQueue();
-    queue.push({ path, body, at: Date.now(), describe });
+    queue.push({ path, body, at: Date.now(), describe,
+                 subject: WHO?.subject || "", by: WHO?.name || "" });
     writeQueue(queue);
     renderQueue();
     show(false, "Nodo non raggiungibile: l'ho messo in coda.", describe);
@@ -257,14 +618,20 @@ async function send(path, body, describe) {
 async function flush() {
   const queue = readQueue();
   if (!queue.length) return;
+  const subject = WHO?.subject || "";
   const left = [];
+  let sent = 0;
   for (const item of queue) {
-    try { await post(item.path, item.body); }
+    // Somebody else's note WAITS. It is not refused, not re-attributed and not
+    // lost — it goes back in the queue in its place, and the line under the
+    // buttons says whose it is and that it is waiting for them.
+    if (!isMine(item, subject)) { left.push(item); continue; }
+    try { await post(item.path, item.body); sent++; }
     catch { left.push(item); }          // still down: keep the ORDER
   }
   writeQueue(left);
   renderQueue();
-  if (queue.length && !left.length) show(true, `Ho mandato ${queue.length} cose in coda.`);
+  if (sent) show(true, `Ho mandato ${sent} ${sent === 1 ? "cosa" : "cose"} in coda.`);
 }
 
 // ── is the node there? ──────────────────────────────────────────────────────
@@ -280,10 +647,29 @@ async function ping() {
     state.textContent = "offline";
   }
 }
-setInterval(ping, 8000);
-ping();
-renderQueue();
-addEventListener("online", flush);
+$("signin").addEventListener("click", signIn);
+$("signout").addEventListener("click", signOut);
+
+// ── starting up ─────────────────────────────────────────────────────────────
+//
+// The order matters. The config comes FIRST because everything else is a
+// decision that needs it: whether a sign-in is even possible, which endpoint to
+// exchange a code at, what the gate should say. Only then is the returning
+// `?code=` worth looking at — and only then does the screen get drawn, so that
+// the three gestures never appear for an instant to somebody who has not signed.
+async function boot() {
+  AUTHCFG = await loadAuthConfig();
+  if (returningFromIdp()) {
+    await signInReturn();
+  } else if (SERVICE_TOKEN) {
+    adopt(SERVICE_TOKEN);               // the bench door, declared above
+  }
+  render();
+  ping();
+  setInterval(ping, 8000);
+  addEventListener("online", flush);
+}
+boot();
 
 // ── speak ───────────────────────────────────────────────────────────────────
 // The browser's own recogniser when it has one (it is free and it is on the
