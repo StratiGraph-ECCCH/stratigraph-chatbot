@@ -113,9 +113,19 @@ def test_the_service_worker_precaches_the_brand():
     """Cache-first would get there after the first ONLINE load, which is the
     case a trench does not offer."""
     worker = (WEB / "sw.js").read_text(encoding="utf-8")
-    assert "/brand/stratigraph-theme.css" in worker
-    assert worker.count("/brand/fonts/") == 8
-    assert "sg-shell-v2" in worker, "a new shell needs a new cache name"
+    # RELATIVE since 2026-08-30: under `/chat/` behind the node's proxy,
+    # `/brand/...` is not this app's — see `test_pwa_under_a_prefix.py`.
+    assert "./brand/stratigraph-theme.css" in worker
+    assert worker.count("./brand/fonts/") == 8
+    # The RULE, not the number: a shell whose contents changed under a cache
+    # name that did not is a device still serving the old one. Bumped to v3 with
+    # the move to relative paths, precisely because the v2 entries are keyed by
+    # absolute URLs and have to be evicted.
+    import re
+    version = re.search(r'const SHELL = "sg-shell-v(\d+)"', worker)
+    assert version, "the shell cache must be named and versioned"
+    assert int(version.group(1)) >= 3, \
+        "a new shell needs a new cache name — the paths changed at v3"
 
 
 def test_the_dom_handles_the_script_needs_are_all_still_there():

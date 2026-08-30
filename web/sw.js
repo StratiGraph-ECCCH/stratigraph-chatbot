@@ -14,21 +14,31 @@
 //
 // ~190 KB for eight woff2 and a stylesheet: the price of not depending on a
 // network, paid once, on a device that will spend its day without one.
-const SHELL = "sg-shell-v2";
+const SHELL = "sg-shell-v3";
+
+// WHERE THIS WORKER LIVES — `/` in development, `/chat/` behind the node's Caddy.
+//
+// Derived from the worker's own URL and never written down, for the same reason
+// the page derives its API base: on the shared https origin, `/brand/...` is not
+// this app's `/brand/...`, and a precache list of absolute paths would quietly
+// fill the cache with somebody else's files (or with 404s) while looking like it
+// worked. Relative entries below resolve against this, which is also exactly the
+// worker's scope.
+const BASE = new URL("./", self.location.href).pathname;
 
 const SHELL_FILES = [
-  "/",
-  "/brand/stratigraph-theme.css",
-  "/brand/logo/favicon-deep-charcoal.svg",
-  "/brand/logo/favicon-off-white.svg",
-  "/brand/fonts/erode-latin-400-normal.woff2",
-  "/brand/fonts/erode-latin-500-normal.woff2",
-  "/brand/fonts/erode-latin-600-normal.woff2",
-  "/brand/fonts/ibm-plex-sans-latin-400-normal.woff2",
-  "/brand/fonts/ibm-plex-sans-latin-500-normal.woff2",
-  "/brand/fonts/ibm-plex-sans-latin-600-normal.woff2",
-  "/brand/fonts/ibm-plex-mono-latin-400-normal.woff2",
-  "/brand/fonts/ibm-plex-mono-latin-500-normal.woff2",
+  "./",
+  "./brand/stratigraph-theme.css",
+  "./brand/logo/favicon-deep-charcoal.svg",
+  "./brand/logo/favicon-off-white.svg",
+  "./brand/fonts/erode-latin-400-normal.woff2",
+  "./brand/fonts/erode-latin-500-normal.woff2",
+  "./brand/fonts/erode-latin-600-normal.woff2",
+  "./brand/fonts/ibm-plex-sans-latin-400-normal.woff2",
+  "./brand/fonts/ibm-plex-sans-latin-500-normal.woff2",
+  "./brand/fonts/ibm-plex-sans-latin-600-normal.woff2",
+  "./brand/fonts/ibm-plex-mono-latin-400-normal.woff2",
+  "./brand/fonts/ibm-plex-mono-latin-500-normal.woff2",
 ];
 
 self.addEventListener("install", (e) => {
@@ -51,10 +61,16 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   // Never cache the API: an answer is about a graph that changes, and a cached
   // "Ho creato la US 12" would be a claim about a write that did not happen.
-  if (url.pathname.startsWith("/v1/") || url.pathname === "/health") return;
+  //
+  // Matched against BASE, not against `/`: under a prefix this app's API is at
+  // `/chat/v1/...`, and the bare test would have cached every answer it was
+  // meant to refuse.
+  if (url.pathname.startsWith(BASE + "v1/") || url.pathname === BASE + "health") {
+    return;
+  }
   if (e.request.method !== "GET") return;
   e.respondWith(
     caches.match(e.request).then((hit) => hit || fetch(e.request).catch(
-      () => caches.match("/")))
+      () => caches.match(BASE)))
   );
 });

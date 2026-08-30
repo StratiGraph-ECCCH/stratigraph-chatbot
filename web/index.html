@@ -182,7 +182,19 @@
 // ── the node ────────────────────────────────────────────────────────────────
 // Same origin: this page is served BY the field node, so there is no host to
 // configure and nothing to get wrong on a phone somebody just handed you.
-const NODE = location.origin;
+// WHERE THE NODE IS, derived from this document's own URL — never written down.
+//
+// The page is served at the origin's root in development (`uvicorn --port 8020`,
+// with `--reload`, which is a loop worth keeping) and under `/chat/` behind the
+// node's Caddy, where every StratiGraph face shares one https origin. Under a
+// prefix, `location.origin` is WRONG in a way that does not look wrong: it makes
+// `/v1/say` mean the ROOM SERVER's `/v1/say`, because on a shared origin `/v1`
+// is not this app's.
+//
+// `new URL(".", href)` is the document's own directory: `http://host:8020/` in
+// development, `https://host:8443/chat/` behind the proxy. Same page, both
+// places, and nothing to configure.
+const NODE = new URL(".", location.href).href.replace(/\/+$/, "");
 // The token is kept in memory only — never in localStorage. A field device is
 // lent, dropped and borrowed; a token on its disk outlives the person holding it.
 let TOKEN = new URLSearchParams(location.search).get("token") || "";
@@ -342,7 +354,21 @@ $("where").addEventListener("click", () => {
     () => { /* no fix: the answer above is still useful */ });
 });
 
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+// The service worker, RELATIVE — and the scope is the reason, not the path.
+//
+// `register("/sw.js")` under `/chat/` fails twice: the file is not there, and a
+// worker registered at the origin's root would claim scope `/` — intercepting
+// the fetches of the room server, the catalogue and IIIF, which share this
+// origin. That is a bug nobody sees until it is horrible.
+//
+// `./sw.js` resolves against this document, so the worker is fetched from
+// `/chat/sw.js` and its scope is `/chat/` — its own directory, which is exactly
+// the reach it should have. `scope: "./"` says so out loud rather than relying
+// on the default; a WIDER scope would need a `Service-Worker-Allowed` header,
+// and wanting one would be the sign of a mistake.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(() => {});
+}
 </script>
 </body>
 </html>
