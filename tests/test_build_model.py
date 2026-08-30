@@ -74,11 +74,14 @@ def test_the_unit_number_comes_out_of_the_sentence_when_it_is_in_it():
         "costruisci il modello 3D di questa US dalle foto", registry).slots
 
 
-def test_the_registry_now_holds_six_tools():
+def test_the_registry_now_holds_seven_tools():
+    """Grew by one on 2026-08-30: `open_in_emstudio`, the round-trip's voice.
+    The count is asserted rather than the membership alone, so a tool that
+    appears without anybody deciding to add it shows up here."""
     registry = build_registry(FakeNode(), InMemoryAssetStore())
     assert {d.name for d in registry.list()} == {
         "create_su", "which_project", "attach_photo_to_su", "ingest_photos",
-        "query_kg", "build_model"}
+        "query_kg", "build_model", "open_in_emstudio"}
 
 
 # ── 2 · what the node is asked ───────────────────────────────────────────────

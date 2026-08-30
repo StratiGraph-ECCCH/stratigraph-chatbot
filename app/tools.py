@@ -1,4 +1,4 @@
-"""The six tools — the first clients of the contract.
+"""The seven tools — the first clients of the contract.
 
 Grown from Elisa Dalla Longa's field card (design note §4): a thick forex card
 with colour-coded voice commands, an accessibility artefact that doubles as the
@@ -456,6 +456,80 @@ def make_build_model(graph_writer, asset_store) -> ToolDescriptor:
         service="rest", handler=handler)
 
 
+# ── 7 · open_in_emstudio ─────────────────────────────────────────────────────
+
+def make_open_in_emstudio(graph_writer, asset_store) -> ToolDescriptor:
+    """"apri questa stanza in EMStudio" — the round-trip, from the trench.
+
+    Not a transfer and not an export: the graph lives in the ROOM, so opening it
+    elsewhere is another client joining the same room. Somebody standing over a
+    unit says this, and the person at the laptop finds the study already there.
+
+    **The link names a place and never a permission.** It comes from the node's
+    own handoff contract (`GET /v1/rooms/{id}/open`), asked for the room this
+    assistant is connected to, and EMStudio signs itself in when it opens.
+
+    Reads nothing and writes nothing — `writes=False`, so the core's no-author
+    refusal does not fire: asking where a room can be opened is not an act on
+    the record.
+    """
+
+    def handler(slots: Dict[str, Any], author: Optional[str]) -> ToolResult:
+        room = getattr(graph_writer, "room_id", None)
+        reader = getattr(graph_writer, "read", None)
+        if not room or reader is None:
+            return ToolResult(
+                ok=False,
+                message="Non sono in una stanza: non c'è niente da aprire "
+                        "altrove. Questo nodo sta scrivendo sul contenitore "
+                        "locale.",
+                data={"reason": "no-room"})
+
+        answer = reader(f"/v1/rooms/{room}/open")
+        if answer is None:
+            return ToolResult(
+                ok=False,
+                message="Non riesco a raggiungere il nodo per chiedere come si "
+                        "apre la stanza. Riprova quando torna la rete.",
+                data={"reason": "unreachable", "room": room})
+        if answer.get("detail"):
+            return ToolResult(ok=False,
+                              message=f"Il nodo ha rifiutato: {answer['detail']}",
+                              data={"reason": "refused", "room": room})
+
+        card = (answer.get("tools") or {}).get("emstudio") or {}
+        # The browser door when the deployment hosts a web build, the desktop
+        # scheme otherwise — the same two doors the room browser offers, and the
+        # same rule: no door at all beats a door that fails after the click.
+        browser = card.get("browser")
+        scheme = card.get("scheme") or answer.get("scheme")
+        link = browser or scheme
+        if not link:
+            return ToolResult(
+                ok=False,
+                message="Questo nodo non sa dire come aprire EMStudio.",
+                data={"reason": "no-door", "room": room})
+
+        where = "nel browser" if browser else "in EMStudio"
+        return ToolResult(
+            ok=True,
+            message=f"Ecco il link per aprire la stanza {room} {where}. "
+                    f"Non contiene nessun token: EMStudio ti fa entrare da sé.",
+            data={"room": room, "link": link,
+                  "kind": "browser" if browser else "scheme",
+                  "web": answer.get("web"),
+                  "carries_token": bool(answer.get("carries_token"))})
+
+    return ToolDescriptor(
+        name="open_in_emstudio",
+        intents=["apri questa stanza in emstudio", "apri in emstudio",
+                 "apri lo studio sul computer", "passa a emstudio"],
+        input_schema=[],
+        description="Il link per aprire la STESSA stanza in EMStudio — il grafo "
+                    "è della stanza, quindi non si trasferisce niente.",
+        service="rest", writes=False, handler=handler)
+
+
 # ── the five, registered ─────────────────────────────────────────────────────
 
 def build_registry(graph_writer, asset_store) -> ToolRegistry:
@@ -470,4 +544,5 @@ def build_registry(graph_writer, asset_store) -> ToolRegistry:
     registry.register(make_ingest_photos(graph_writer, asset_store))
     registry.register(make_query_kg(graph_writer))
     registry.register(make_build_model(graph_writer, asset_store))
+    registry.register(make_open_in_emstudio(graph_writer, asset_store))
     return registry

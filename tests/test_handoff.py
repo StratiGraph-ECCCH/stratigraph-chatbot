@@ -25,6 +25,7 @@ from app.writer import LocalWriter, RoomWriter, writer_from_env  # noqa: E402
 
 SECRETS = ("token", "access_token", "id_token", "password", "secret", "code",
            "authorization", "bearer", "api_key")
+ORCID = "0000-0002-1825-0097"
 
 
 # ── 1 · the grammar ──────────────────────────────────────────────────────────
@@ -176,3 +177,92 @@ def test_with_nothing_configured_it_is_still_the_local_container(tmp_path):
     writer = writer_from_env({
         "EM_CHATBOT_CONTAINER": str(tmp_path / "s.em.json")})
     assert isinstance(writer, LocalWriter)
+
+
+# ── 4 · the round-trip: the same room, the other editor ─────────────────────
+
+def test_a_voice_asks_the_node_how_to_open_the_room_it_is_in():
+    """Not a transfer: the graph lives in the ROOM, so opening it elsewhere is
+    another client joining the same room."""
+    from app.assets import InMemoryAssetStore
+    from app.contract import invoke
+    from app.tools import build_registry
+
+    asked = []
+
+    class Node:
+        room_id = "scavo-cs03"
+
+        def read(self, path):
+            asked.append(path)
+            return {"room": "scavo-cs03", "server": "https://em.example.org",
+                    "carries_token": False,
+                    "scheme": "stratigraph://open?server=x&room=scavo-cs03",
+                    "web": "https://em.example.org/open?room=scavo-cs03",
+                    "tools": {"emstudio": {
+                        "label": "EMStudio",
+                        "scheme": "stratigraph://open?server=x&room=scavo-cs03",
+                        "browser": "http://localhost:5177/?server=x&room=scavo-cs03"}}}
+
+        def apply(self, delta): pass
+        def has_node(self, node_id): return True
+        def study_name(self): return "Saggio B"
+        def count_units(self): return 1
+        def answer(self, q): return ""
+
+    node = Node()
+    registry = build_registry(node, InMemoryAssetStore())
+    result = invoke(registry.route("open_in_emstudio"), {}, ORCID)
+    assert result.ok, result.message
+    assert asked == ["/v1/rooms/scavo-cs03/open"]
+    # the browser door wins where a web build is deployed
+    assert result.data["kind"] == "browser"
+    assert "room=scavo-cs03" in result.data["link"]
+    assert result.data["carries_token"] is False
+    for secret in SECRETS:
+        assert f"{secret}=" not in result.data["link"].lower()
+
+
+def test_the_desktop_scheme_is_offered_when_no_web_build_is_deployed():
+    from app.assets import InMemoryAssetStore
+    from app.tools import make_open_in_emstudio
+
+    class Node:
+        room_id = "r"
+
+        def read(self, path):
+            return {"room": "r", "scheme": "stratigraph://open?room=r",
+                    "carries_token": False,
+                    "tools": {"emstudio": {"scheme": "stratigraph://open?room=r"}}}
+
+    result = make_open_in_emstudio(Node(), InMemoryAssetStore()).handler({}, ORCID)
+    assert result.ok and result.data["kind"] == "scheme"
+
+
+def test_off_a_room_it_says_so_rather_than_offering_a_link_to_nowhere():
+    from app.assets import InMemoryAssetStore
+    from app.tools import make_open_in_emstudio
+    from app.writer import LocalWriter
+
+    local = LocalWriter("/tmp/nowhere.em.json", study="x")
+    result = make_open_in_emstudio(local, InMemoryAssetStore()).handler({}, ORCID)
+    assert not result.ok and result.data["reason"] == "no-room"
+
+
+def test_asking_where_a_room_opens_is_not_an_act_on_the_record():
+    """`writes=False`, so the core's no-author refusal does not fire — and the
+    tool writes nothing."""
+    from app.assets import InMemoryAssetStore
+    from app.contract import invoke
+    from app.tools import make_open_in_emstudio
+
+    class Node:
+        room_id = "r"
+        def read(self, path):
+            return {"room": "r", "scheme": "stratigraph://open?room=r",
+                    "tools": {"emstudio": {"scheme": "stratigraph://open?room=r"}}}
+
+    descriptor = make_open_in_emstudio(Node(), InMemoryAssetStore())
+    assert descriptor.writes is False
+    result = invoke(descriptor, {}, None)          # no author at all
+    assert result.ok, result.message
