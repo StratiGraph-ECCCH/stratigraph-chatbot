@@ -106,6 +106,8 @@ Tests:
 | `EM_SERVER_URL`, `EM_CHATBOT_ROOM`, `EM_CHATBOT_TOKEN` | the shared room. A room without a token is a startup refusal |
 | `EM_CHATBOT_CONTAINER`, `EM_CHATBOT_STUDY` | the node's own container, for the offline case |
 | `MINIO_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` / `_BUCKET` | the photos. **The same variables StratiGraph Server reads** |
+| `EM_CHATBOT_INTENT_MODEL`, `EM_CHATBOT_INTENT_ENDPOINT` | an intent model ON THIS NODE — `<provider>:<model>` (or a bare model name) and an OpenAI-compatible base URL, which is what Ollama, llama.cpp, llamafile and vLLM all expose. **No default endpoint, deliberately:** a default would be somebody's cloud. One without the other refuses to start; an endpoint that is not loopback/LAN is allowed but SAID, loudly, in the log and in `/health`. Unset → the rules answer, exactly as before |
+| `EM_CHATBOT_INTENT_TIMEOUT` | seconds one intent call may take (default 8). Short on purpose: this sits between a person speaking and a card appearing |
 | `EM_CHATBOT_WHISPER_MODEL` | a Whisper model ON THIS NODE. Set → `/v1/listen` transcribes here and the field page sends audio. Unset → the page transcribes in the browser (or ATRIUM does) and sends text to `/say`. Half-configured (a path with no model) refuses, it does not fall back |
 
 ## Hearing: three roads, and the node says which
@@ -134,6 +136,26 @@ the reader's: `/v1/tools` publishes `command_language`, because the commands are
 the node's phrasebook (today Italian) and transcribing Italian speech with a
 Polish model produces words — the wrong ones — and presents itself as «the
 assistant misunderstands me».
+
+## Interpreting: the rules first, a model second
+
+The same gesture as hearing, one layer up. `understand()` asks the RULES first —
+the field vocabulary is closed and designed on purpose, and asking a model to
+interpret a sentence that matches it exactly would be slower, less predictable
+and occasionally wrong — and only then, for what they missed, the model. Which
+still chooses **only among the tools the registry declares**: a model that
+answered `dig_trench` is refused, so a hallucination costs a shrug and not a
+wrong record.
+
+| what | where it runs | what it needs |
+|---|---|---|
+| the rules | in the process, always | nothing |
+| the model | on this node, behind an OpenAI-compatible endpoint | the two variables above |
+
+`/health` says **which engine and which model**, not whether there is one: that
+string is provenance, and a datum without the name of the engine that produced it
+is a datum nobody can argue about later. When there is none it names the
+variables that would configure it.
 
 ### The rule this is one case of
 

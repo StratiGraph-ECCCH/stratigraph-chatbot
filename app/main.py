@@ -45,6 +45,8 @@ from .assets import describe as asset_describe
 from .auth import AuthDependency, authenticator, principal_orcid
 from .contract import ToolResult, invoke
 from .intent import COMMAND_LANGUAGE, understand
+from .intent import describe as intent_describe
+from .intent import intent_model_from_env
 from .speech import describe as stt_describe
 from .speech import stt_from_env
 from .tools import build_registry
@@ -75,9 +77,20 @@ STT = stt_from_env()
 REGISTRY = build_registry(WRITER, ASSET_STORE)
 
 #: The intent model is OPTIONAL and absent by default. The rules answer the
-#: field card's commands, which is what the MVP needs; a model is loaded on the
-#: node when there is one, and `/health` says whether it was.
-INTENT_MODEL = None
+#: field card's commands, which is what the MVP needs; a model is used on the
+#: node when the node names one, and `/health` says WHICH.
+#:
+#: Built at import for the reason `WRITER` and `STT` are: a HALF configuration
+#: must refuse where somebody is watching, not on the first dictation in a
+#: trench. Until 2026-09-02 this was a bare `None` and nothing could set it —
+#: `/health` declared a capability that had no switch.
+#:
+#: The order is untouched and stays untouched: **rules first, model second.** The
+#: field vocabulary is closed and designed on purpose; asking a model to
+#: interpret a sentence that matches it exactly would be slower, less
+#: predictable, and occasionally wrong. And the model still chooses only among
+#: the tools the registry declares (`llm_parse`).
+INTENT_MODEL = intent_model_from_env()
 
 v1 = APIRouter(prefix="/v1", dependencies=[AuthDependency])
 public = APIRouter()
@@ -101,7 +114,19 @@ class Health(BaseModel):
     writes_to: str = "local container"
     asset_store: str = "memory"
     speech: str = "passthrough"
+    #: Kept, and DERIVED from the line below: a probe that only ever asked
+    #: "is there one?" must not break the day the answer got longer.
     intent_model: bool = False
+    #: WHICH engine is interpreting, and which model — or which variable would
+    #: name one. A boolean was not enough (design note §4): that string is
+    #: PROVENANCE, and a datum without the name of the engine that produced it
+    #: is a datum nobody can argue about later. Same shape as `speech` above.
+    intent: str = "rules only"
+    #: The node's AI capabilities, in the shape design note §4 asks for: a name,
+    #: a state, the engine when there is one, and what would configure it when
+    #: there is not. This is what `/v1/node`'s public reduction forwards, so a
+    #: surface never keeps a list of its own.
+    capabilities: List["Capability"] = Field(default_factory=list)
     #: The language this node's command vocabulary is written in. A surface
     #: localised into another language still has to show ITS examples, or it
     #: offers a phrase the node would refuse.
@@ -115,6 +140,63 @@ class Health(BaseModel):
     missing: List[str] = Field(default_factory=list)
     #: The registry IS the documentation: what this node can do, by name.
     tools: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class Capability(BaseModel):
+    """One AI capability of this node, as design note §4 asks it to be said."""
+
+    name: str
+    #: `absent` — this node does not do it · `configured` — it names an engine
+    #: and the configuration is coherent · `active` — it is loaded here.
+    #:
+    #: There is no `active` for `intent`, and that is honest rather than lazy:
+    #: knowing it would mean reaching the model's endpoint, and a health probe
+    #: that makes a network call at import is a health probe that can hang. A
+    #: model that does not answer surfaces on FIRST USE, with a line in the log
+    #: and an «I did not understand» — the rules having already had their turn.
+    state: str = "absent"
+    #: which engine and which model. Never empty: when nothing is configured it
+    #: says so, because "" would read as a missing field.
+    engine: str = ""
+    #: the variable(s) that would configure it, when it is absent
+    missing: List[str] = Field(default_factory=list)
+
+
+def _capabilities() -> List[Capability]:
+    """What this node can do, and what would make it able.
+
+    ONE builder, so `/health` and — through the room server's probe — the public
+    reduction in `/v1/node` cannot tell two different stories. A probe and a gate
+    that disagree send two people looking in two places.
+    """
+    from .intent import INTENT_ENDPOINT_VAR, INTENT_MODEL_VAR
+
+    speech_engine = stt_describe(STT)
+    on_node = not speech_engine.startswith("passthrough")
+    capabilities = [
+        Capability(
+            name="speech",
+            state="active" if on_node else "absent",
+            engine=speech_engine,
+            missing=[] if on_node else ["EM_CHATBOT_WHISPER_MODEL"],
+        ),
+        Capability(
+            name="intent",
+            state="configured" if INTENT_MODEL is not None else "absent",
+            engine=intent_describe(INTENT_MODEL),
+            missing=([] if INTENT_MODEL is not None
+                     else [INTENT_MODEL_VAR, INTENT_ENDPOINT_VAR]),
+        ),
+    ]
+    # …and the one configuration that can send an excavation's words off the
+    # site is SAID here as well as logged at startup. Design note §5: silent is
+    # what makes it an incident.
+    local = getattr(INTENT_MODEL, "local", True)
+    if INTENT_MODEL is not None and not local:
+        capabilities[-1].missing.append(
+            "WARNING: the intent endpoint is NOT local — every dictated "
+            "sentence leaves this node")
+    return capabilities
 
 
 def _identity_gaps() -> List[str]:
@@ -161,6 +243,8 @@ def _health() -> Health:
         asset_store=asset_describe(ASSET_STORE),
         speech=stt_describe(STT),
         intent_model=INTENT_MODEL is not None,
+        intent=intent_describe(INTENT_MODEL),
+        capabilities=_capabilities(),
         accepts_dictation=bool(authenticator.settings.enforcing),
         missing=_identity_gaps(),
         tools=[{"name": d.name, "intents": d.intents, "writes": d.writes,
