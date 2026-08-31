@@ -430,12 +430,20 @@ def describe(model: Optional[IntentModel]) -> str:
 
     A boolean was not enough (design note §4): that string is provenance, and a
     datum without the name of the engine that produced it is a datum nobody can
-    argue about later. When there is none, it says which variable would set one —
-    the habit the field assistant already has for OIDC.
+    argue about later.
+
+    WHAT THIS NO LONGER SAYS, and why. It used to name the two variables here
+    too, because when it was written the node published them nowhere else. It
+    does now — `capabilities[].missing`, which the room server forwards and the
+    node's front door renders — and carrying them in both places made the front
+    door read them out twice, once inside this sentence and once under «needs».
+    Measured on screen on 2026-09-02.
+
+    So the division is: this says WHICH ENGINE, `missing` says WHAT WOULD
+    CONFIGURE ONE. One fact, one field.
     """
     if model is None:
-        return (f"rules only (set {INTENT_MODEL_VAR} and "
-                f"{INTENT_ENDPOINT_VAR} for a model on this node)")
+        return "rules only"
     described = getattr(model, "describe", None)
     if callable(described):
         return str(described())
