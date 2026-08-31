@@ -89,6 +89,12 @@ class Health(BaseModel):
     ok: bool = True
     service: str = "stratigraph-chatbot"
     version: str
+    #: WHICH graph language this process is actually running. The other two
+    #: services of the stack publish it already; this one did not, and that is
+    #: how three images installing three different specs went unnoticed. They
+    #: share em.json files and one vocabulary — a version that differs is a study
+    #: the catalogue indexes differently from how the server wrote it.
+    s3dgraphy: str = ""
     auth: str = "dev-no-auth"
     #: WHERE what you say ends up. `local container` means the others will see
     #: it at the next sync, not now — and an operator has to be able to tell.
@@ -133,9 +139,19 @@ def _identity_gaps() -> List[str]:
     return gaps
 
 
+def _s3dgraphy_version() -> str:
+    try:
+        import s3dgraphy
+
+        return str(getattr(s3dgraphy, "__version__", "") or "")
+    except Exception:                                  # noqa: BLE001
+        return ""
+
+
 def _health() -> Health:
     return Health(
         version=__version__,
+        s3dgraphy=_s3dgraphy_version(),
         auth=authenticator.settings.describe(),
         writes_to=writer_describe(WRITER),
         asset_store=asset_describe(ASSET_STORE),

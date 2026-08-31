@@ -9,7 +9,26 @@ FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 
-ARG S3DGRAPHY_SPEC="s3dgraphy>=1.6.0.dev13"
+# The s3Dgraphy this image installs: the VERSION from one place, the EXTRAS
+# from this service.
+#
+# `S3DGRAPHY_VERSION` has NO DEFAULT, and that is the whole point rather than an
+# omission. A default here would be a second spelling of a number that must agree
+# with `dev-stack/.env.dev`, and two spellings of one version are two versions the
+# day somebody edits one — which is exactly what happened: this image sat
+# on dev12 while the catalogue and the field assistant had drifted to dev16, in a
+# stack that shares em.json files and one semantic vocabulary. A build without the
+# argument REFUSES, the way `auth.py` refuses a half-configured realm, instead of
+# falling back to a pin nobody chose.
+#
+#   docker build --build-arg S3DGRAPHY_VERSION=<version> -t stratigraph-chatbot .
+#
+# The EXTRAS stay here because they are legitimately this service's own — here,
+# NONE: the field assistant reads and writes containers and has no use for pyproj
+# or rdflib, and an image that ships to a node in a trench should not carry them.
+# A service may choose what it needs; it may not move the version by itself.
+ARG S3DGRAPHY_VERSION
+ARG S3DGRAPHY_EXTRAS=""
 
 WORKDIR /srv/stratigraph-chatbot
 
@@ -17,8 +36,11 @@ COPY pyproject.toml README.md ./
 # PyJWT and minio are not behind a build arg, for StratiGraph Server's reason: an image
 # that cannot verify a token comes up open, and this one WRITES to a shared
 # graph; an image that cannot reach the store keeps photos in a process.
-RUN pip install --upgrade pip && \
-    pip install "${S3DGRAPHY_SPEC}" "fastapi>=0.110" "uvicorn[standard]>=0.27" \
+RUN set -eu; \
+    : "${S3DGRAPHY_VERSION:?required — dev-stack/.env.dev holds it}"; \
+    spec="s3dgraphy${S3DGRAPHY_EXTRAS:+[${S3DGRAPHY_EXTRAS}]}==${S3DGRAPHY_VERSION}"; \
+    pip install --upgrade pip && \
+    pip install "$spec" "fastapi>=0.110" "uvicorn[standard]>=0.27" \
                 "PyJWT[crypto]>=2.8" "minio>=7.2" "python-multipart>=0.0.9"
 
 COPY app ./app

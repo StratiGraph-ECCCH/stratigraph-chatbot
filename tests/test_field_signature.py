@@ -377,3 +377,18 @@ def test_the_vendored_theme_carries_the_hidden_rule():
     page_style = PAGE[PAGE.index("<style>"):PAGE.index("</style>")]
     assert "[hidden] { display: none" not in page_style, \
         "the rule belongs to the theme; a local copy is a second source of truth"
+
+
+# ── which graph language this node runs ──────────────────────────────────────
+
+def test_health_says_which_s3dgraphy_is_running(client):
+    """The three services of a stack share em.json files and one vocabulary, and
+    they install s3Dgraphy separately because their extras differ. This one was
+    the only face that did not SAY which version it had — which is part of why
+    three images installing three different specs went unnoticed until somebody
+    read a build log. `dev-stack/smoke_s3dgraphy.py` is what reads it.
+    """
+    import s3dgraphy
+
+    assert client.get("/health").json()["s3dgraphy"] == s3dgraphy.__version__
+    assert client.get("/v1/health").json()["s3dgraphy"] == s3dgraphy.__version__
