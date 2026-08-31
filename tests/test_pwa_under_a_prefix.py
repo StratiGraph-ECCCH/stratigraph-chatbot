@@ -113,8 +113,12 @@ def test_the_shell_cache_was_renamed_so_a_stale_one_is_dropped():
     v3 → v4: the page gained the signature gate. A device still serving v3 would
     show the three gestures to somebody who has not signed — which is the exact
     thing that change exists to prevent.
+
+    v4 → v5: six languages, and the speech road chosen by the node. A device on
+    v4 would keep an Italian-only page that transcribes in the browser even on a
+    node that has a model — the whole point, missed silently.
     """
-    assert 'const SHELL = "sg-shell-v4"' in WORKER
+    assert 'const SHELL = "sg-shell-v5"' in WORKER
 
 
 def test_the_page_still_works_at_the_ROOT_which_is_the_development_loop():

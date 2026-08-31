@@ -85,6 +85,24 @@ def extract_us(transcript: str) -> Optional[str]:
     return None
 
 
+#: The language the rules — and therefore this NODE — actually understand.
+#:
+#: The intent vocabulary is a phrasebook somebody designed on purpose ("crea una
+#: nuova scheda", "questa foto è per la US"), and it is Italian. That is a fact
+#: about this node, not a default to be embarrassed about; what WOULD be wrong is
+#: leaving it unsaid, because then a page localised into Polish shows a Polish
+#: example of a command this node would refuse — a lie in the one place where
+#: somebody is standing in a trench with their hands full.
+#:
+#: So it is DECLARED, and `/v1/tools` and `/health` publish it, the way the node
+#: already publishes which speech engine and which tools it has. The page's
+#: chrome follows the reader; the conversation follows the node.
+#:
+#: Teaching a node a second command language means a second phrasebook beside
+#: the tool descriptors, and it belongs to the node. It is not a page's to fake.
+COMMAND_LANGUAGE = "it"
+
+
 def _normalise(text: str) -> str:
     return re.sub(r"[^\w\s]", " ", (text or "").lower()).strip()
 

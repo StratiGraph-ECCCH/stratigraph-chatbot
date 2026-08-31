@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#F1EBE3" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#2E2D2C" media="(prefers-color-scheme: dark)">
-<title>StratiGraph · assistente di campo</title>
+<title>StratiGraph · field assistant</title>
 <link rel="icon" href="./brand/logo/favicon-deep-charcoal.svg" type="image/svg+xml">
 <!--
   The field client (design note §6): a PWA, not a native app. ATRIUM is already
@@ -62,8 +62,18 @@
     font-size: var(--sg-text-xs); color: var(--sg-accent-quiet);
     letter-spacing: .6px;
   }
+  /* The language picker: small, in the header, one touch away. A device that
+     changes hands changes language with it, and a settings screen is a place
+     nobody finds with gloves on. */
+  .lang {
+    margin-left: auto;
+    font: inherit; font-size: var(--sg-text-xs);
+    padding: 6px 8px; border-radius: var(--sg-radius-sm);
+    background: var(--sg-surface); color: var(--sg-text);
+    border: 1px solid var(--sg-line);
+  }
   .state {
-    margin-left: auto; text-align: right;
+    text-align: right;
     font-family: var(--sg-font-mono); font-size: var(--sg-text-xs);
     color: var(--sg-muted);
   }
@@ -193,30 +203,41 @@
 <body>
 <header>
   <img src="./brand/logo/favicon-deep-charcoal.svg" alt="" width="30" height="30">
-  <div class="brand"><b>StratiGraph</b><span>assistente di campo</span></div>
+  <div class="brand"><b>StratiGraph</b><span id="app-subtitle">field assistant</span></div>
+  <!-- The language picker, in the header and not behind a settings screen: on a
+       device that changes hands the language changes with it, and it has to cost
+       one touch. Each option is written IN its own language, so somebody who
+       cannot read the current one can still find their own. -->
+  <select class="lang" id="lang" aria-label="Language"></select>
   <span class="state" id="state">…</span>
 </header>
 <div class="signature" id="signature" hidden>
-  firmato <b id="who-name"></b> <span id="who-subject"></span>
-  <button id="signout">Esci</button>
+  <span id="signed-as">signed in as</span> <b id="who-name"></b>
+  <span id="who-subject"></span>
+  <button id="signout">Sign out</button>
 </div>
 <main>
   <!-- Nobody has signed: this is the whole screen. -->
   <section id="gate" hidden>
     <p class="hint" id="gate-why"></p>
-    <button class="primary" id="signin" hidden>✍️ Firma per iniziare</button>
+    <button class="primary" id="signin" hidden>✍️ Sign in to begin</button>
   </section>
 
   <!-- The three gestures of the MVP, and nothing else on the screen. -->
   <section id="work" hidden>
-    <button class="primary" id="rec">🎙 Tieni premuto e parla</button>
+    <button class="primary" id="rec">🎙 Hold and speak</button>
     <div class="row">
-      <button id="shoot">📷 Scatta</button>
-      <button id="where">📍 Dove sono</button>
+      <button id="shoot">📷 Photo</button>
+      <button id="where">📍 Where am I</button>
     </div>
-    <p class="hint" id="hint">Se il microfono non c'è, scrivi il comando qui sotto.</p>
-    <input type="text" id="typed" placeholder="crea una nuova scheda, US 12" enterkeyhint="send">
-    <button id="send">Manda</button>
+    <p class="hint" id="hint">If there is no microphone, type the command below.</p>
+    <!-- The placeholder is NOT translated: it is an example of a command THIS
+         NODE understands, and the node publishes its vocabulary at /v1/tools.
+         A Polish example of a phrase the node would refuse is the one lie this
+         page must not tell — see `commands.in` below it. -->
+    <input type="text" id="typed" enterkeyhint="send">
+    <button id="send">Send</button>
+    <p class="hint" id="commands-in"></p>
     <img class="shot" id="shot" hidden alt="">
     <div class="said" id="said"></div>
   </section>
@@ -228,6 +249,160 @@
 <input type="file" id="camera" accept="image/*" capture="environment" hidden>
 
 <script>
+// ── the language ────────────────────────────────────────────────────────────
+//
+// English is the source language of every StratiGraph surface. Beside it, the
+// languages of the project's case studies (T2.3) — the ones somebody will
+// actually excavate in: it · ro · el · es · pl.
+//
+// `en` and `it` are complete; the other four carry THE SAME KEYS with empty
+// values, which fall back to English. That is not laziness: translating is the
+// partners' work, each for their own language and their own dig, and a string
+// invented by us in a language none of us re-reads is worse than the English.
+// A test checks that no locale has a hole, because a hole is a missing sentence
+// in a trench.
+//
+// Keys are ENGLISH PHRASES, not `msg_1`: a key you can read is a key you can
+// check against the screen without running anything.
+//
+// WHERE THE CHOICE LIVES, and this has been reasoned twice: the language may sit
+// on disk. It is not a credential, and it is a property of the DEVICE and not of
+// the person — like the queue, and unlike the token. A borrowed tablet must
+// change author, not language.
+const LOCALES = ["en", "it", "ro", "el", "es", "pl"];
+const LOCALE_NAMES = { en: "English", it: "Italiano", ro: "Română",
+                       el: "Ελληνικά", es: "Español", pl: "Polski" };
+const LOCALE_KEY = "sg.locale.v1";
+
+const STRINGS = {
+  en: {
+    "app.subtitle": "field assistant",
+    "signed.as": "signed in as",
+    "action.signout": "Sign out",
+    "action.signin": "✍️ Sign in to begin",
+    "gate.why.canSign": "Sign in with your identity: what you dictate enters the graph under your name.",
+    "gate.why.noAuth": "This node does not ask for a signature, so it can attribute nothing you would say: dictations would be refused.",
+    "gate.why.missing": "Missing: {what}.",
+    "gate.why.unreachable": "I cannot ask the node how to sign in. Without a signature I cannot accept dictation, because nobody could be its author.",
+    "action.record": "🎙 Hold and speak",
+    "action.shoot": "📷 Photo",
+    "action.where": "📍 Where am I",
+    "action.send": "Send",
+    "hint.type": "If there is no microphone, type the command below.",
+    "hint.noListen": "This browser does not listen: type the command.",
+    "hint.nodeListens": "Speak: the recording goes to the node, which transcribes it.",
+    "listening": "Listening…",
+    "heard": "I heard: ",
+    "read": "I read: ",
+    "notHeard": "I did not hear anything.",
+    "notHeard.offline": "I did not hear anything — this browser sends the recording to a remote server to transcribe it, and there is no network. Type the command.",
+    "recording": "Recording… release to send.",
+    "node.room": "node · room",
+    "node.local": "node · local",
+    "node.offline": "offline",
+    "queue.mine": "{n} queued, I will send them when the node is back.",
+    "queue.theirs.one": "1 note by {who}, waiting for them to return.",
+    "queue.theirs.many": "{n} notes by {who}, waiting for them to return.",
+    "queue.unsigned.one": "1 note with no signature, dictated before signing existed: it stays in the queue.",
+    "queue.unsigned.many": "{n} notes with no signature, dictated before signing existed: they stay in the queue.",
+    "queue.sent.one": "I sent 1 queued thing.",
+    "queue.sent.many": "I sent {n} queued things.",
+    "queue.kept": "Node unreachable: I put it in the queue.",
+    "signin.failed": "Sign-in failed: ",
+    "signin.noPending": "this tab had no sign-in in progress.",
+    "signin.badState": "the sign-in state does not match: refusing a code this tab did not ask for.",
+    "signin.noKeycloak": "I cannot reach Keycloak from this device.",
+    "signin.noToken": "Keycloak returned no token.",
+    "signin.answered": "Keycloak answered {status}",
+    "signout.local": "Signed out of this device. The node publishes no realm logout, so the Keycloak session may still be open.",
+    "here": "Here: {lat}, {lon}",
+    "lang.label": "Language",
+    "commands.in": "This node understands commands in {language}.",
+  },
+  it: {
+    "app.subtitle": "assistente di campo",
+    "signed.as": "firmato",
+    "action.signout": "Esci",
+    "action.signin": "✍️ Firma per iniziare",
+    "gate.why.canSign": "Firma con la tua identità: quello che detti entra nel grafo a tuo nome.",
+    "gate.why.noAuth": "Questo nodo non chiede la firma, quindi non può attribuire a nessuno quello che diresti: le dettature verrebbero rifiutate.",
+    "gate.why.missing": "Manca: {what}.",
+    "gate.why.unreachable": "Non riesco a chiedere al nodo come si firma. Senza firma non posso accettare dettature, perché nessuno potrebbe esserne l'autore.",
+    "action.record": "🎙 Tieni premuto e parla",
+    "action.shoot": "📷 Scatta",
+    "action.where": "📍 Dove sono",
+    "action.send": "Manda",
+    "hint.type": "Se il microfono non c'è, scrivi il comando qui sotto.",
+    "hint.noListen": "Questo browser non ascolta: scrivi il comando.",
+    "hint.nodeListens": "Parla: la registrazione va al nodo, che la trascrive.",
+    "listening": "In ascolto…",
+    "heard": "Ho sentito: ",
+    "read": "Ho letto: ",
+    "notHeard": "Non ho sentito.",
+    "notHeard.offline": "Non ho sentito — questo browser manda la registrazione a un server remoto per trascriverla, e la rete non c'è. Scrivi il comando.",
+    "recording": "Sto registrando… rilascia per mandare.",
+    "node.room": "nodo · stanza",
+    "node.local": "nodo · locale",
+    "node.offline": "offline",
+    "queue.mine": "{n} in coda, li mando appena torna il nodo.",
+    "queue.theirs.one": "1 nota di {who} in attesa che rientri.",
+    "queue.theirs.many": "{n} note di {who} in attesa che rientri.",
+    "queue.unsigned.one": "1 nota senza firma, dettata prima che la firma esistesse: resta in coda.",
+    "queue.unsigned.many": "{n} note senza firma, dettate prima che la firma esistesse: restano in coda.",
+    "queue.sent.one": "Ho mandato 1 cosa in coda.",
+    "queue.sent.many": "Ho mandato {n} cose in coda.",
+    "queue.kept": "Nodo non raggiungibile: l'ho messo in coda.",
+    "signin.failed": "Firma non riuscita: ",
+    "signin.noPending": "questa scheda non aveva una firma in corso.",
+    "signin.badState": "lo stato della firma non corrisponde: rifiuto un codice che questa scheda non ha chiesto.",
+    "signin.noKeycloak": "non raggiungo Keycloak da questo dispositivo.",
+    "signin.noToken": "Keycloak non ha restituito un token.",
+    "signin.answered": "Keycloak ha risposto {status}",
+    "signout.local": "Uscito da questo dispositivo. Il nodo non espone un logout del realm, quindi la sessione di Keycloak può essere ancora aperta.",
+    "here": "Qui: {lat}, {lon}",
+    "lang.label": "Lingua",
+    "commands.in": "Questo nodo capisce i comandi in {language}.",
+  },
+  // ── the partners' slots: same keys, empty values, falling back to `en` ──────
+  ro: {}, el: {}, es: {}, pl: {},
+};
+// Every locale carries every key of `en` — empty where nobody has translated it
+// yet, so a translator sees the whole list and a test can count the holes.
+for (const code of LOCALES) {
+  for (const key of Object.keys(STRINGS.en)) {
+    if (!(key in STRINGS[code])) STRINGS[code][key] = "";
+  }
+}
+
+function pickLocale() {
+  // an explicit choice wins, and it is remembered on THIS DEVICE
+  try {
+    const saved = localStorage.getItem(LOCALE_KEY);
+    if (saved && LOCALES.includes(saved)) return saved;
+  } catch { /* a browser with no storage: the browser's own language decides */ }
+  const asked = (navigator.language || "en").slice(0, 2).toLowerCase();
+  return LOCALES.includes(asked) ? asked : "en";
+}
+
+let LOCALE = pickLocale();
+
+/** A string in the active locale, falling back to English when nobody has
+ *  translated it. `{placeholders}` are filled from `values`. */
+function t(key, values) {
+  const text = (STRINGS[LOCALE] && STRINGS[LOCALE][key]) || STRINGS.en[key] || key;
+  return values
+    ? text.replace(/\{(\w+)\}/g, (_m, name) => String(values[name] ?? ""))
+    : text;
+}
+
+function setLocale(code) {
+  if (!LOCALES.includes(code)) return;
+  LOCALE = code;
+  try { localStorage.setItem(LOCALE_KEY, code); } catch { /* nothing to do */ }
+  document.documentElement.lang = code;
+  paintStrings();
+}
+
 // ── the node ────────────────────────────────────────────────────────────────
 // Same origin: this page is served BY the field node, so there is no host to
 // configure and nothing to get wrong on a phone somebody just handed you.
@@ -277,6 +452,10 @@ let TOKEN = "";
 let WHO = null;
 //: how this node wants a browser to sign in (`GET /v1/auth-config`), or null.
 let AUTHCFG = null;
+//: {language, example} — WHICH language this node's commands are in, and one of
+//: its own phrases to show as an example. From `GET /v1/tools`, which publishes
+//: the vocabulary; never invented here.
+let NODE_COMMANDS = null;
 
 // The SERVICE DOOR, kept on purpose: `?token=…` is how the smokes and the bench
 // drive this page without a person in front of Keycloak. It is not scrubbed off
@@ -331,16 +510,118 @@ function adopt(token) {
 const $ = (id) => document.getElementById(id);
 const state = $("state"), answerBox = $("answer"), saidBox = $("said");
 
-function show(ok, message, detail) {
+/** Show an answer, and read it out loud — the person hearing it has their hands
+ *  in the soil.
+ *
+ *  `lang` is the language of THIS MESSAGE, and it is not always the chrome's.
+ *  An answer built by the node arrives in the node's language; a sentence built
+ *  by this page arrives in the reader's. Speaking one with the other's voice is
+ *  the mistake that used to be hard-coded here as `it-IT`.
+ */
+function show(ok, message, detail, lang) {
   answerBox.hidden = false;
   answerBox.className = "answer " + (ok ? "ok" : "bad");
   answerBox.textContent = message + (detail ? ` (${detail})` : "");
-  // Read it out loud: the person hearing this has their hands in the soil.
+  answerBox.lang = lang || nodeLanguage();
+  speak(message, lang || nodeLanguage());
+}
+
+// ── the voice ───────────────────────────────────────────────────────────────
+//
+// The SYNTHESIS is the operating system's (Web Speech API): nothing to install,
+// no model to ship to a tablet. But the voices are not interchangeable and this
+// is measured rather than assumed:
+//
+//   · the voice must MATCH the language of the sentence. Reading Romanian with
+//     an Italian voice is worse than silence — it is confidently wrong;
+//   · `localService` first. A network voice is silent on a node with no uplink,
+//     which is exactly where we work;
+//   · if there is no voice for that language, DO NOT SPEAK. The text stays on
+//     screen, which is the honest outcome.
+//
+// `getVoices()` is empty until the engine has loaded them, and it fires
+// `voiceschanged` when it has — so this asks each time rather than caching a
+// list that was empty at boot.
+function voiceFor(lang) {
+  let voices = [];
+  try { voices = speechSynthesis.getVoices() || []; } catch { return null; }
+  const wanted = String(lang || "").slice(0, 2).toLowerCase();
+  const matching = voices.filter(
+    (v) => String(v.lang || "").slice(0, 2).toLowerCase() === wanted);
+  if (!matching.length) return null;
+  return matching.find((v) => v.localService) || matching[0];
+}
+
+function speak(message, lang) {
+  const voice = voiceFor(lang);
+  if (!voice) return;      // no voice for this language: the text is still there
   try {
     const say = new SpeechSynthesisUtterance(message);
-    say.lang = "it-IT";
+    say.voice = voice;
+    say.lang = voice.lang;
     speechSynthesis.speak(say);
-  } catch { /* no voice on this device: the text is still there */ }
+  } catch { /* the engine refused: the text is still there */ }
+}
+
+/** The language the NODE speaks — its commands and its answers. Falls back to
+ *  the reader's locale only when the node has not said, which is the one case
+ *  where guessing costs nothing. */
+const nodeLanguage = () => (NODE_COMMANDS && NODE_COMMANDS.language) || LOCALE;
+
+// ── the screen, repainted in the active language ────────────────────────────
+//
+// One function, called at boot and on every change of language. It repaints the
+// STATIC labels; everything the page says at a moment (an answer, a queue line)
+// is built with `t()` where it is built, so it is already in the right language.
+function paintStrings() {
+  const set = (id, text) => { const n = $(id); if (n) n.textContent = text; };
+  set("app-subtitle", t("app.subtitle"));
+  set("signed-as", t("signed.as"));
+  set("signout", t("action.signout"));
+  set("signin", t("action.signin"));
+  set("rec", t("action.record"));
+  set("shoot", t("action.shoot"));
+  set("where", t("action.where"));
+  set("send", t("action.send"));
+  set("hint", recognitionHint());
+  document.title = "StratiGraph · " + t("app.subtitle");
+  paintCommandLanguage();
+  render();
+}
+
+/** What the node understands, and an example of it.
+ *
+ *  The placeholder is the node's OWN phrase — the first one its registry
+ *  declares for creating a unit — and never a translation of it. And when the
+ *  reader's language is not the node's, the page SAYS which language the
+ *  commands are in, because otherwise a Polish interface silently invites a
+ *  Polish sentence that the node will refuse. */
+function paintCommandLanguage() {
+  const typed = $("typed");
+  const line = $("commands-in");
+  if (!NODE_COMMANDS) { if (typed) typed.placeholder = ""; return; }
+  if (typed) typed.placeholder = NODE_COMMANDS.example || "";
+  const language = NODE_COMMANDS.language || "";
+  if (!line) return;
+  line.textContent = (language && language !== LOCALE)
+    ? t("commands.in", { language: LOCALE_NAMES[language] || language })
+    : "";
+}
+
+function paintLanguagePicker() {
+  const picker = $("lang");
+  if (!picker) return;
+  picker.innerHTML = "";
+  for (const code of LOCALES) {
+    const option = document.createElement("option");
+    option.value = code;
+    // …written in its OWN language: somebody who cannot read the current one
+    // must still be able to find theirs in the list.
+    option.textContent = LOCALE_NAMES[code];
+    if (code === LOCALE) option.selected = true;
+    picker.appendChild(option);
+  }
+  picker.addEventListener("change", () => setLocale(picker.value));
 }
 
 // ── signing in ──────────────────────────────────────────────────────────────
@@ -355,6 +636,29 @@ function show(ok, message, detail) {
  *  both; when it does not, Keycloak says so at the last step and `signInReturn`
  *  below surfaces that sentence rather than a code. */
 const redirectUri = () => HERE;
+
+/** WHAT THIS NODE UNDERSTANDS: the language of its command vocabulary, and one
+ *  of its own phrases to show as an example.
+ *
+ *  From `GET /v1/tools`, which publishes the vocabulary and (since 2026-09-01)
+ *  the language it is written in. The example is the node's OWN phrase — never
+ *  a translation of it — because a translated example is an invitation to say
+ *  something this node would refuse. */
+async function loadNodeCommands() {
+  try {
+    const answer = await fetch(NODE + "/v1/tools",
+                               { headers: { Accept: "application/json" } });
+    if (!answer.ok) return null;
+    const payload = await answer.json();
+    const intents = payload.intents || {};
+    // the longest phrase for creating a unit: the fullest example the node has
+    const examples = Object.keys(intents)
+      .filter((phrase) => intents[phrase] === "create_su")
+      .sort((a, b) => b.length - a.length);
+    return { language: payload.command_language || "",
+             example: examples[0] || "" };
+  } catch { return null; }
+}
 
 async function loadAuthConfig() {
   try {
@@ -423,7 +727,7 @@ function cleanUrl() {
 }
 
 /** Back from Keycloak: `?code=…` → a token in memory. */
-function fail(why) { show(false, "Firma non riuscita: " + why); render(); }
+function fail(why) { show(false, t("signin.failed") + why, "", LOCALE); render(); }
 
 async function signInReturn() {
   const query = new URLSearchParams(location.search);
@@ -439,12 +743,11 @@ async function signInReturn() {
   cleanUrl();
 
   if (error) return fail(query.get("error_description") || error);
-  if (!saved) return fail("questa scheda non aveva una firma in corso.");
+  if (!saved) return fail(t("signin.noPending"));
   // The one check that makes the round trip mean anything: a code delivered
   // with somebody else's state is a code this tab did not ask for.
   if (saved.state && returned !== saved.state) {
-    return fail("lo stato della firma non corrisponde: rifiuto un codice che "
-                + "questa scheda non ha chiesto.");
+    return fail(t("signin.badState"));
   }
   let payload = null;
   try {
@@ -462,16 +765,16 @@ async function signInReturn() {
     payload = await answer.json().catch(() => null);
     if (!answer.ok) {
       return fail(payload?.error_description || payload?.error
-                  || `Keycloak ha risposto ${answer.status}`);
+                  || t("signin.answered", { status: answer.status }));
     }
   } catch {
     // The realm is reached by the BROWSER, not by the node, and behind a proxy
     // those are two different machines. Saying which one failed is the
     // difference between a fixable problem and a mystery.
-    return fail("non raggiungo Keycloak da questo dispositivo.");
+    return fail(t("signin.noKeycloak"));
   }
   adopt(payload.access_token || "");
-  if (!TOKEN) return fail("Keycloak non ha restituito un token.");
+  if (!TOKEN) return fail(t("signin.noToken"));
 }
 
 /** Sign OUT of the realm, not only of this tab.
@@ -494,8 +797,7 @@ function signOut() {
   // No end-session endpoint: this tab is clean, and we SAY that the realm's
   // session is not — better a sentence than a silent half-logout.
   render();
-  show(false, "Uscito da questo dispositivo. Il nodo non espone un logout del "
-              + "realm, quindi la sessione di Keycloak può essere ancora aperta.");
+  show(false, t("signout.local"), "", LOCALE);
 }
 
 // ── what the screen shows ───────────────────────────────────────────────────
@@ -510,20 +812,18 @@ function render() {
   } else {
     $("signin").hidden = !canSign();
     $("gate-why").textContent = canSign()
-      ? "Firma con la tua identità: quello che detti entra nel grafo a tuo nome."
+      ? t("gate.why.canSign")
       : (AUTHCFG
          // A bare gate cannot be told apart from a forgotten variable, and the
          // person meeting it is standing in a trench. So the node NAMES what is
          // in the way (`missing`, the same list `/health` publishes) and the
          // gate repeats it — the habit `auth.py` set when it refuses to start
          // on a half-configured realm rather than behaving oddly.
-         ? "Questo nodo non chiede la firma, quindi non può attribuire a "
-           + "nessuno quello che diresti: le dettature verrebbero rifiutate."
+         ? t("gate.why.noAuth")
            + (AUTHCFG.missing?.length
-              ? " Manca: " + AUTHCFG.missing.join(" · ") + "."
+              ? " " + t("gate.why.missing", { what: AUTHCFG.missing.join(" · ") })
               : "")
-         : "Non riesco a chiedere al nodo come si firma. Senza firma non posso "
-           + "accettare dettature, perché nessuno potrebbe esserne l'autore.");
+         : t("gate.why.unreachable"));
   }
   renderQueue();
 }
@@ -574,12 +874,12 @@ function heldBy(held) {
 function queueSentence(queue, subject) {
   const { mine, held } = partitionQueue(queue, subject);
   const lines = [];
-  if (mine.length) lines.push(`${mine.length} in coda, li mando appena torna il nodo.`);
+  if (mine.length) lines.push(t("queue.mine", { n: mine.length }));
   for (const [label, n] of heldBy(held)) {
-    const noun = n === 1 ? "nota" : "note";
+    const many = n === 1 ? ".one" : ".many";
     lines.push(label === UNSIGNED
-      ? `${n} ${noun} senza firma, dettate prima che la firma esistesse: restano in coda.`
-      : `${n} ${noun} di ${label} in attesa che rientri.`);
+      ? t("queue.unsigned" + many, { n })
+      : t("queue.theirs" + many, { n, who: label }));
   }
   return lines.join(" ");
 }
@@ -610,7 +910,7 @@ async function send(path, body, describe) {
                  subject: WHO?.subject || "", by: WHO?.name || "" });
     writeQueue(queue);
     renderQueue();
-    show(false, "Nodo non raggiungibile: l'ho messo in coda.", describe);
+    show(false, t("queue.kept"), describe, LOCALE);
     return false;
   }
 }
@@ -631,7 +931,8 @@ async function flush() {
   }
   writeQueue(left);
   renderQueue();
-  if (sent) show(true, `Ho mandato ${sent} ${sent === 1 ? "cosa" : "cose"} in coda.`);
+  if (sent) show(true, t("queue.sent" + (sent === 1 ? ".one" : ".many"), { n: sent }),
+                 "", LOCALE);
 }
 
 // ── is the node there? ──────────────────────────────────────────────────────
@@ -640,11 +941,14 @@ async function ping() {
     const res = await fetch(NODE + "/health", { cache: "no-store" });
     const health = await res.json();
     state.className = "state";
-    state.textContent = health.writes_to.startsWith("room") ? "nodo · stanza" : "nodo · locale";
+    state.textContent = t(health.writes_to.startsWith("room") ? "node.room" : "node.local");
+    // Which speech road, from what the node SAYS it has — asked every time, so a
+    // node that gains (or loses) a model is followed rather than remembered.
+    chooseSpeechRoad(health);
     flush();
   } catch {
     state.className = "state off";
-    state.textContent = "offline";
+    state.textContent = t("node.offline");
   }
 }
 $("signin").addEventListener("click", signIn);
@@ -658,16 +962,27 @@ $("signout").addEventListener("click", signOut);
 // `?code=` worth looking at — and only then does the screen get drawn, so that
 // the three gestures never appear for an instant to somebody who has not signed.
 async function boot() {
+  // The language first, and the picker with it: everything drawn after this is
+  // drawn once, in the right language, instead of flickering through English.
+  document.documentElement.lang = LOCALE;
+  paintLanguagePicker();
+  // …then WHAT THE NODE UNDERSTANDS, because the placeholder, the recognition
+  // language and the voice all follow the node and not the chrome.
+  NODE_COMMANDS = await loadNodeCommands();
   AUTHCFG = await loadAuthConfig();
   if (returningFromIdp()) {
     await signInReturn();
   } else if (SERVICE_TOKEN) {
     adopt(SERVICE_TOKEN);               // the bench door, declared above
   }
-  render();
+  paintStrings();
   ping();
   setInterval(ping, 8000);
   addEventListener("online", flush);
+  // The voices arrive after the engine has loaded them, and `getVoices()` is
+  // empty until then — so nothing is cached and this only exists to repaint
+  // once they are there, in case a first answer arrived silently.
+  try { speechSynthesis.addEventListener("voiceschanged", () => {}); } catch {}
 }
 boot();
 
@@ -675,33 +990,155 @@ boot();
 // The browser's own recogniser when it has one (it is free and it is on the
 // device); the node's engine otherwise, by sending the recording. Either way
 // the sentence goes to the same route.
+// THREE ROADS, and THE NODE SAYS WHICH — not this page. Same discipline as
+// `/v1/auth-config` and the front door's `/v1/node`: a capability is declared by
+// whoever has it, and a surface shows what is there and names what is missing.
+//
+//   1 · the node transcribes  (`speech: "whisper (…)"`)
+//       → record, and send AUDIO to `POST /v1/listen`. This is the road that
+//         works in a trench with no uplink, because the model is on the node, a
+//         LAN away. The node can carry models; the device stays thin.
+//   2 · the node does not     (`speech: "passthrough"`)
+//       → the browser's own recogniser, and send TEXT to `/say`, as before.
+//         SAID OUT LOUD: on Chrome that recogniser ships the audio to a REMOTE
+//         server, so it does not work without network — and when it fails the
+//         page says that, instead of "I did not hear anything".
+//   3 · neither
+//       → type. And the page says so, rather than offering a button that does
+//         nothing.
+//
+// The rule this is one case of: **if the node has an AI you have functions; if
+// it does not, you do not — and the page says so.**
+let SPEECH_ROAD = "type";
 let recognition = null;
+let recorder = null;
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const canRecord = () => Boolean(navigator.mediaDevices
+                                && navigator.mediaDevices.getUserMedia
+                                && window.MediaRecorder);
+
+function recognitionHint() {
+  if (SPEECH_ROAD === "node") return t("hint.nodeListens");
+  if (SPEECH_ROAD === "browser") return t("hint.type");
+  return t("hint.noListen");
+}
+
+/** Which road, from what the node SAYS it has. Called on every `/health`. */
+function chooseSpeechRoad(health) {
+  const engine = String((health && health.speech) || "");
+  const road = engine.startsWith("whisper") && canRecord() ? "node"
+             : (!engine.startsWith("whisper") && SR) ? "browser"
+             : "type";
+  if (road === SPEECH_ROAD) return;
+  SPEECH_ROAD = road;
+  $("rec").disabled = road === "type";
+  $("hint").textContent = recognitionHint();
+}
+
+// ── road 2 · the browser hears ──────────────────────────────────────────────
 if (SR) {
   recognition = new SR();
-  recognition.lang = "it-IT";
   recognition.interimResults = false;
   recognition.onresult = (e) => {
     const said = e.results[0][0].transcript;
-    saidBox.textContent = "Ho sentito: " + said;
+    saidBox.textContent = t("heard") + said;
     send("/v1/say", { transcript: said }, said);
   };
-  recognition.onerror = () => show(false, "Non ho sentito.");
-} else {
-  $("rec").disabled = true;
-  $("hint").textContent = "Questo browser non ascolta: scrivi il comando.";
+  // `network` is the error Chrome raises when it cannot reach its own
+  // recogniser. Reporting it as "I did not hear anything" is what sends
+  // somebody looking at the microphone instead of at the uplink.
+  recognition.onerror = (e) => {
+    const offline = e && (e.error === "network" || !navigator.onLine);
+    show(false, t(offline ? "notHeard.offline" : "notHeard"), "", LOCALE);
+  };
 }
-$("rec").addEventListener("click", () => {
+
+function listenInBrowser() {
   if (!recognition) return;
-  saidBox.textContent = "In ascolto…";
+  // The recognition language is the NODE's, not the chrome's: the commands are
+  // the node's phrasebook, and transcribing Italian speech with a Polish model
+  // produces words — the wrong ones — and looks like "it misunderstands me".
+  recognition.lang = nodeLanguage();
+  saidBox.textContent = t("listening");
   try { recognition.start(); } catch { /* already listening */ }
+}
+
+// ── road 1 · the node hears ─────────────────────────────────────────────────
+async function startRecording() {
+  if (recorder) return;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    show(false, t("notHeard"), "", LOCALE);
+    return;
+  }
+  const chunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => {
+    stream.getTracks().forEach((track) => track.stop());
+    recorder = null;
+    if (chunks.length) void sendRecording(new Blob(chunks));
+  };
+  recorder.start();
+  saidBox.textContent = t("recording");
+}
+
+function stopRecording() {
+  if (recorder && recorder.state !== "inactive") recorder.stop();
+}
+
+/** The recording to the node, which transcribes it and acts in one request.
+ *
+ *  `language` is the NODE's, for the same reason `recognition.lang` is: it is
+ *  the language the phrases are in. Before this it was not sent at all and the
+ *  engine fell through to a default — which used to be a hard-coded "it". */
+async function sendRecording(blob) {
+  const form = new FormData();
+  form.append("audio", blob, "dictation.webm");
+  form.append("language", nodeLanguage());
+  saidBox.textContent = t("listening");
+  try {
+    const res = await fetch(NODE + "/v1/listen", {
+      method: "POST",
+      headers: { ...(TOKEN ? { Authorization: "Bearer " + TOKEN } : {}) },
+      body: form,
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const answer = await res.json();
+    if (answer.said) saidBox.textContent = t("heard") + answer.said;
+    show(answer.ok, answer.message, answer.tool || "");
+  } catch {
+    // A recording cannot be queued the way a sentence can — the queue holds
+    // JSON, and a blob on a tablet's disk is the thing this page does not keep.
+    // So this is said and not stored, which is the honest half.
+    show(false, t("queue.kept"), "", LOCALE);
+  }
+}
+
+// ── the gesture, whichever road it takes ────────────────────────────────────
+// Hold to record on the node's road, one touch on the browser's: the two are
+// different acts and pretending they are the same would make one of them lie.
+$("rec").addEventListener("click", () => {
+  if (SPEECH_ROAD === "browser") listenInBrowser();
 });
+for (const event of ["pointerdown"]) {
+  $("rec").addEventListener(event, () => {
+    if (SPEECH_ROAD === "node") void startRecording();
+  });
+}
+for (const event of ["pointerup", "pointercancel", "pointerleave"]) {
+  $("rec").addEventListener(event, () => {
+    if (SPEECH_ROAD === "node") stopRecording();
+  });
+}
 
 // ── type ────────────────────────────────────────────────────────────────────
 async function sendTyped() {
   const said = $("typed").value.trim();
   if (!said) return;
-  saidBox.textContent = "Ho letto: " + said;
+  saidBox.textContent = t("read") + said;
   $("typed").value = "";
   await send("/v1/say", { transcript: said }, said);
 }
@@ -735,8 +1172,8 @@ $("camera").addEventListener("change", async () => {
 $("where").addEventListener("click", () => {
   send("/v1/say", { transcript: "in che progetto sto lavorando" }, "progetto");
   navigator.geolocation?.getCurrentPosition(
-    (pos) => { saidBox.textContent =
-      `Qui: ${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`; },
+    (pos) => { saidBox.textContent = t("here", {
+      lat: pos.coords.latitude.toFixed(5), lon: pos.coords.longitude.toFixed(5) }); },
     () => { /* no fix: the answer above is still useful */ });
 });
 

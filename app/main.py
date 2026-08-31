@@ -44,7 +44,7 @@ from .assets import ASSET_STORE
 from .assets import describe as asset_describe
 from .auth import AuthDependency, authenticator, principal_orcid
 from .contract import ToolResult, invoke
-from .intent import understand
+from .intent import COMMAND_LANGUAGE, understand
 from .speech import describe as stt_describe
 from .speech import stt_from_env
 from .tools import build_registry
@@ -102,6 +102,10 @@ class Health(BaseModel):
     asset_store: str = "memory"
     speech: str = "passthrough"
     intent_model: bool = False
+    #: The language this node's command vocabulary is written in. A surface
+    #: localised into another language still has to show ITS examples, or it
+    #: offers a phrase the node would refuse.
+    command_language: str = COMMAND_LANGUAGE
     #: Whether a dictation can be accepted AT ALL. False when no identity
     #: provider is configured: the tools would refuse the write anyway ("Non
     #: posso scrivere senza sapere chi sei"), so a field page that offered an
@@ -279,7 +283,11 @@ def list_tools() -> Dict[str, Any]:
     data. What is behind them is protected; what they ARE is public.
     """
     return {"tools": [d.as_dict() for d in REGISTRY.list()],
-            "intents": REGISTRY.intents()}
+            "intents": REGISTRY.intents(),
+            # …and WHICH LANGUAGE those phrases are in. Without it a client can
+            # read the vocabulary and not know that it is a vocabulary — that
+            # these are the words, not a translation of the words.
+            "command_language": COMMAND_LANGUAGE}
 
 
 # ── the act ───────────────────────────────────────────────────────────────────
@@ -296,6 +304,11 @@ class Answer(BaseModel):
     ok: bool
     #: The sentence to read out loud. Present on every path, including failure.
     message: str
+    #: WHAT WAS HEARD. Only interesting on `/listen`, where the node did the
+    #: transcribing and the device has no idea what it sent — `intent.py` keeps
+    #: it for exactly this ("so a caller can show it and a person can correct
+    #: it"), and until now nothing carried it back out.
+    said: str = ""
     intent: Optional[str] = None
     tool: Optional[str] = None
     slots: Dict[str, Any] = Field(default_factory=dict)
@@ -320,6 +333,7 @@ def _run(transcript: str, slots: Dict[str, Any], author: Optional[str]) -> Answe
                                      if v is not None}}
     result: ToolResult = invoke(descriptor, merged, author, registry=REGISTRY)
     return Answer(ok=result.ok, message=result.message,
+                  said=understood.transcript or "",
                   intent=understood.intent or None, tool=understood.tool,
                   slots={k: v for k, v in merged.items()
                          if not isinstance(v, (bytes, bytearray))},
@@ -341,6 +355,7 @@ def say(request: Request, body: Say = Body(...)) -> Answer:
 async def listen(request: Request,
                  audio: UploadFile = File(...),
                  us: Optional[str] = Form(default=None),
+                 language: Optional[str] = Form(default=None),
                  photo: Optional[UploadFile] = File(default=None)) -> Answer:
     """Audio in — transcribed on the node, then exactly as `/say`.
 
@@ -348,10 +363,22 @@ async def listen(request: Request,
     somebody takes a picture and says what it is of, in one act. Making them two
     requests would mean the device has to hold state between them, in a place
     where the network drops.
+
+    `language` is WHICH language to transcribe as, and it was not being passed at
+    all: the call fell through to the engine's default, which used to be a
+    hard-coded `"it"`. A wrong transcription language does not fail — it produces
+    words, the wrong ones, and the fault presents itself as "the assistant
+    misunderstands me", which sends somebody looking in the wrong place for an
+    afternoon. Absent means "let the engine decide", which for Whisper is
+    detection; it no longer means "assume Italian".
+
+    The caller that knows is the page: it sends the language its NODE speaks
+    (`command_language`), not the one its own chrome is drawn in.
     """
     raw = await audio.read()
     try:
-        transcript = STT.transcribe(raw)
+        transcript = (STT.transcribe(raw, language=language)
+                      if language else STT.transcribe(raw))
     except Exception as exc:                       # noqa: BLE001
         raise HTTPException(
             status_code=501,

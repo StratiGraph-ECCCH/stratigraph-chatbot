@@ -3,7 +3,7 @@
 > **An orchestrator, not a re-implementation.** Voice or text comes in, an intent
 > comes out, a tool acts, and what changes is a **DTC-attributed write on the
 > shared graph**. It does not rebuild voice capture (ARC's **ATRIUM** does that),
-> nor speech-to-text (**Whisper** runs downstream on the field node), nor the
+> nor speech-to-text (**Whisper** runs ON the field node — see below), nor the
 > structured US database (**PyArchInit**, **iDAI.field**), nor photos and 3D
 > (**Tropy**, the object store, **Heriverse**). What was missing is the
 > **convergence and orchestration layer** — and that is this.
@@ -106,7 +106,47 @@ Tests:
 | `EM_SERVER_URL`, `EM_CHATBOT_ROOM`, `EM_CHATBOT_TOKEN` | the shared room. A room without a token is a startup refusal |
 | `EM_CHATBOT_CONTAINER`, `EM_CHATBOT_STUDY` | the node's own container, for the offline case |
 | `MINIO_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` / `_BUCKET` | the photos. **The same variables StratiGraph Server reads** |
-| `EM_CHATBOT_WHISPER_MODEL` | speech on the node. Unset → the client sends the transcript (the ATRIUM case) |
+| `EM_CHATBOT_WHISPER_MODEL` | a Whisper model ON THIS NODE. Set → `/v1/listen` transcribes here and the field page sends audio. Unset → the page transcribes in the browser (or ATRIUM does) and sends text to `/say`. Half-configured (a path with no model) refuses, it does not fall back |
+
+## Hearing: three roads, and the node says which
+
+`Whisper runs downstream on the field node` used to be the first line of this
+file, and **that word `downstream` was the whole misunderstanding**: it reads as
+*elsewhere, later, in the institutional node*, and it is the only reason we
+believed local transcription was still to come. It is not. The seam and both
+implementations are in `app/speech.py`, `POST /v1/listen` exists, and `/health`
+already declares which engine this node has. What was missing was a page that
+used it.
+
+**The node may carry the models; the device stays thin.** An FCN is a mini-PC
+switched on at the dig: it is the right place for a frugal model. A borrowed
+tablet is not.
+
+| road | what chooses it | what it needs | with no network |
+|---|---|---|---|
+| **the node transcribes** | `/health` says `speech: "whisper (…)"` | `EM_CHATBOT_WHISPER_MODEL` on the node; a microphone on the device | **works** — the model is a LAN away, and the LAN is the node's own wifi |
+| **the browser transcribes** | `/health` says `speech: "passthrough"` and the browser has `SpeechRecognition` | nothing on the node | **does not work.** On Chrome the recording goes to a REMOTE recogniser. The page says so instead of «I did not hear anything» |
+| **you type** | neither of the above | nothing | works |
+
+The page asks `/health` on every poll, so a node that gains a model is followed
+rather than remembered. And the language it transcribes in is **the node's**, not
+the reader's: `/v1/tools` publishes `command_language`, because the commands are
+the node's phrasebook (today Italian) and transcribing Italian speech with a
+Polish model produces words — the wrong ones — and presents itself as «the
+assistant misunderstands me».
+
+### The rule this is one case of
+
+> **If the node has an AI you have functions; if it does not, you do not — and
+> the surface says so.** A function that depends on a model is never faked, never
+> silently disabled, and never offered as a button that does nothing: the node
+> declares the capability, the surface shows what is there and names what is
+> missing.
+
+`app/speech.py` already worked this way for transcription — *it exists when it is
+configured, it is never chosen in silence, and a half-configuration refuses with
+a sentence* — and `/health` already declared it. This slice only opened the road
+to the one client that would use it.
 
 ## What is deliberately not here
 

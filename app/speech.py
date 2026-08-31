@@ -28,7 +28,7 @@ from typing import Any, Dict, Optional, Protocol
 class SpeechToText(Protocol):
     """Audio in, text out. That is the entire contract."""
 
-    def transcribe(self, audio: bytes, *, language: str = "it") -> str:
+    def transcribe(self, audio: bytes, *, language: str = "") -> str:
         ...
 
 
@@ -44,7 +44,7 @@ class PassthroughSTT:
     name = "passthrough"
     available = True
 
-    def transcribe(self, audio: bytes, *, language: str = "it") -> str:
+    def transcribe(self, audio: bytes, *, language: str = "") -> str:
         if isinstance(audio, str):
             return audio.strip()
         try:
@@ -87,11 +87,15 @@ class WhisperSTT:
                 f"transcript the client sends.")
         self._model = WhisperModel(model_path, compute_type=compute_type)
 
-    def transcribe(self, audio: bytes, *, language: str = "it") -> str:
+    def transcribe(self, audio: bytes, *, language: str = "") -> str:
         import io
 
+        # `None` and not `""`: faster-whisper reads None as "detect it", and an
+        # empty string is not the same request. The default used to be a
+        # hard-coded "it", which is how a library signature came to assume a
+        # language — the same drift we took out of the page.
         segments, _info = self._model.transcribe(io.BytesIO(audio),
-                                                 language=language)
+                                                 language=language or None)
         return " ".join(segment.text.strip() for segment in segments).strip()
 
 

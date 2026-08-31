@@ -48,6 +48,38 @@ def _code(source: str) -> str:
 CODE = _code(PAGE)
 
 
+# ── reading the page's own dictionaries ──────────────────────────────────────
+#
+# The strings live INLINE in the page, by design: it is one HTML file so it can
+# be read and installed on a device in a trench, with no build step and nothing
+# to fetch. So a test that wants to check a string reads them out of the source,
+# the same way the rest of this file reads properties out of it.
+
+def locales() -> dict:
+    """`{locale: {key: value}}` as the page declares them."""
+    block = re.search(r"const STRINGS = \{(.*?)\n\};", PAGE, re.S)
+    assert block, "the page declares no STRINGS"
+    found: dict = {}
+    for match in re.finditer(r"^  (\w+): \{(.*?)^  \}", block.group(1),
+                             re.S | re.M):
+        code, body = match.group(1), match.group(2)
+        found[code] = {
+            key: value for key, value in
+            re.findall(r'"([^"]+)":\s*"((?:[^"\\]|\\.)*)"', body)
+        }
+    # the empty-slot locales are declared on one line: `ro: {}, el: {}, …`
+    for code in re.findall(r"(\w+): \{\},", block.group(1)):
+        found.setdefault(code, {})
+    return found
+
+
+LOCALES = locales()
+
+
+def _string(locale: str, key: str) -> str:
+    return LOCALES.get(locale, {}).get(key, "")
+
+
 # ── the token never touches the disk ─────────────────────────────────────────
 
 def test_the_token_is_never_written_to_storage():
@@ -123,7 +155,12 @@ def test_signing_out_goes_through_the_realm_and_not_only_this_tab():
 def test_a_node_without_a_realm_logout_says_so_instead_of_pretending():
     body = CODE[CODE.index("function signOut()"):]
     body = body[:body.index("function render()")]
-    assert "può essere ancora aperta" in body
+    # the sentence itself now lives in the dictionary, keyed — so what this
+    # asserts is that the branch SAYS something, and that the something exists
+    # in both complete locales.
+    assert 't("signout.local")' in body
+    for locale in ("en", "it"):
+        assert _string(locale, "signout.local"), locale
 
 
 # ── no dictation without a signature ─────────────────────────────────────────
@@ -149,7 +186,8 @@ def test_a_node_that_cannot_attribute_offers_no_sign_in_button():
     what you said». Offering a button that cannot work is the worse lie."""
     body = CODE[CODE.index("function render()"):]
     assert '$("signin").hidden = !canSign()' in body
-    assert "non chiede la firma" in body
+    assert 't("gate.why.noAuth")' in body
+    assert _string("en", "gate.why.noAuth")
 
 
 # ── the claim spellings agree with the node's ────────────────────────────────
@@ -180,12 +218,16 @@ def test_the_claims_are_read_for_DISPLAY_and_decide_nothing():
 # ── the queue carries who dictated ───────────────────────────────────────────
 
 def _pure_queue_rules() -> str:
-    """The queue rules as a self-contained block: `isMine` through
-    `queueSentence`, with no DOM and no storage between them. That they CAN be
-    sliced out is half the point — a rule tangled into the rendering is a rule
-    that can only be checked by eye."""
+    """The queue rules as a self-contained block: `isMine` through `heldBy`,
+    with no DOM, no storage and — since the page learned six languages — no
+    `t()` between them. That they CAN be sliced out is half the point: a rule
+    tangled into the rendering is a rule that can only be checked by eye.
+
+    `queueSentence` is deliberately OUTSIDE this block now. It builds a sentence
+    and a sentence has a language; the RULE is the partition, and that is what
+    stays pure."""
     start = CODE.index("const isMine =")
-    end = CODE.index("function renderQueue()")
+    end = CODE.index("function queueSentence(")
     return CODE[start:end]
 
 
@@ -215,7 +257,6 @@ console.log(JSON.stringify({
   anna:  partitionQueue(queue, "0000-0001-0000-0001"),
   marco: partitionQueue(queue, "0000-0002-0000-0002"),
   nobody: partitionQueue(queue, ""),
-  said_to_anna: queueSentence(queue, "0000-0001-0000-0001"),
 }));
 """
     out = subprocess.run([shutil.which("node"), "--input-type=module", "-e", harness],
@@ -233,12 +274,19 @@ console.log(JSON.stringify({
     assert result["nobody"]["mine"] == []
     assert len(result["nobody"]["held"]) == 4
 
-    # …and the page SAYS whose the waiting notes are, by name.
-    said = result["said_to_anna"]
-    assert "2 in coda" in said
-    assert "1 nota di Marco Bianchi in attesa che rientri" in said
-    assert "senza firma" in said, \
-        "a note dictated before signatures existed is held, and said, not sent"
+
+def test_the_page_SAYS_whose_the_waiting_notes_are():
+    """The rule holds them; this is the half that tells somebody. Asserted on the
+    dictionary rather than on a rendered string, because the sentence now has six
+    possible languages and the placeholder is the contract."""
+    for key in ("queue.mine", "queue.theirs.one", "queue.theirs.many",
+                "queue.unsigned.one", "queue.unsigned.many"):
+        assert _string("en", key), key
+    assert "{who}" in _string("en", "queue.theirs.many")
+    assert "{n}" in _string("en", "queue.mine")
+    body = CODE[CODE.index("function queueSentence("):]
+    body = body[:body.index("function renderQueue()")]
+    assert 't("queue.theirs"' in body and 't("queue.unsigned"' in body
 
 
 def test_a_queued_note_is_stamped_when_it_is_DICTATED_not_when_it_is_sent():
@@ -362,7 +410,8 @@ def test_declared_anonymity_is_IN_THE_WAY_too(client, monkeypatch):
 
 def test_the_gate_repeats_what_the_node_named(client):
     assert "AUTHCFG.missing" in CODE
-    assert '" Manca: "' in CODE
+    assert 't("gate.why.missing"' in CODE
+    assert "{what}" in _string("en", "gate.why.missing")
 
 
 # ── the theme is what makes `hidden` win, and it is vendored ─────────────────
