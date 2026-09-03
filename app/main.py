@@ -60,7 +60,22 @@ except ImportError as exc:  # pragma: no cover
         "stratigraph-chatbot needs s3dgraphy importable: pip install s3dgraphy "
         f"(or -e ../s3Dgraphy). {exc}") from exc
 
-__version__ = "0.1.0.dev0"
+# THE VERSION, and the convention is not this service's to invent.
+#
+#     <major EM>.<minor EM>.<the tool's own iteration>
+#
+# The first two segments declare which Extended Matrix language this build
+# speaks; the third is its own history. **A tool cannot be more stable than the
+# language it speaks**: while s3Dgraphy is `1.6.0.devN`, so is this.
+#
+# Measured, not assumed: s3Dgraphy is `1.6.0.dev17`, and EM-blender-tools
+# already carries `1.6.0-dev.8` beside an s3dgraphy wheel of `1.6.0.dev16`, so
+# the convention existed and was adopted half-way. `0.1.0.dev0` meant this
+# service had never been versioned at all.
+#
+# The third segment is the COORDINATE OF A TEST REPORT: «on dev2 this no longer
+# happens» is information, «on the latest version» is not.
+__version__ = "1.6.0.dev1"
 
 app = FastAPI(
     title="stratigraph-chatbot",
