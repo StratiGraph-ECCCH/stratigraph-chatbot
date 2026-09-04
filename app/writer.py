@@ -461,13 +461,45 @@ class RoomWriter:
         local container. Offline-first means the network is the optional part,
         and a photograph somebody took must not be lost to a dropped connection.
         """
+        # ── UN SOLO OROLOGIO PER UN SOLO ORDINAMENTO ────────────────────────
+        #
+        # `apply` non timbrava: le sue operazioni partivano senza `ts`, e il
+        # relay ne metteva uno suo. `update` invece timbra col clock di QUESTO
+        # client. Due orologi decidono un ordinamento, e il risultato si è visto
+        # nel giro vero del 23 settembre — una scheda che crea l'unità e la
+        # riempie nella stessa richiesta:
+        #
+        #     created_at   2026-09-04T21:51:08Z   (payload, clock del client)
+        #     modified_at  2026-09-04T21:51:09Z   (op, clock del relay)
+        #     → i cinque campi tornano tutti `stale`, contro un nodo creato
+        #       nella stessa richiesta, e la scheda non salva NIENTE
+        #
+        # Il campo senza orologio proprio ricade sul timbro del NODO (la regola
+        # del fallback di P4.1), quindi un nodo timbrato un secondo avanti
+        # rifiuta ogni campo che arriva con l'ora giusta.
+        #
+        # Timbrare qui non risolve la sincronia fra macchine diverse — quello è
+        # l'ADR-003, ed è di WP6 — ma toglie il caso in cui **lo stesso client,
+        # nella stessa richiesta**, si contraddice da solo.
+        #
+        # IL TEMPO SÌ, L'IDENTITÀ NO, e la differenza non è nostra: il relay fa
+        # `pop("author")` e `setdefault("ts")`. Cioè un `ts` del client viene
+        # ONORATO — deve esserlo, perché una nota dettata in trincea alle 10 e
+        # sincronizzata alle 18 porta le 10 — mentre un `author` del client
+        # viene buttato, perché l'identità è quella del TOKEN e un client che la
+        # dichiarasse starebbe mentendo a valle. La prima versione di questa
+        # riga mandava anche l'autore; l'ha fermata
+        # `test_no_author_is_sent_because_the_relay_takes_it_from_the_token`,
+        # che esisteva già ed è precisamente il test che serviva.
+        stamp = _now()
         ops: List[Dict[str, Any]] = []
         for node in delta.nodes + ([delta.process] if delta.process else []):
-            ops.append({"op": "add_node", "id": node["id"], "node": node})
+            ops.append({"op": "add_node", "id": node["id"], "node": node,
+                        "ts": stamp})
         for edge in delta.edges:
             ops.append({"op": "add_edge", "id": edge.get("id"),
                         "source": edge["source"], "target": edge["target"],
-                        "edge_type": edge.get("edge_type")})
+                        "edge_type": edge.get("edge_type"), "ts": stamp})
         if not ops:
             return
 
@@ -502,16 +534,28 @@ class RoomWriter:
                                         "payload": op}))
                 self._await_result(socket, op)
 
-    def _drain_join(self, socket: Any) -> None:
-        """Read the three join frames, and BELIEVE the first one.
+    def _drain_join(self, socket: Any) -> Optional[Dict[str, Any]]:
+        """Read the three join frames, BELIEVE the first, and KEEP the snapshot.
 
         `host_info.can_write` is the room telling you at the door what you may
         do. Checking it turns "the assistant said it saved and nothing appeared"
         into a sentence somebody can act on — and it costs one field of a frame
         we have to read anyway.
+
+        AND THE SNAPSHOT IS RETURNED rather than discarded. It was being thrown
+        away, and the cost of that showed up in the live round of 23 September:
+        validating a field in a ROOM answered «non trovo la US 3015 in questo
+        grafo», because `has_node`/`node` fell through to the local container —
+        which of course does not have a unit that was written to the room. The
+        room sends its whole document at the door; not reading it meant opening
+        a second, impossible question.
         """
+        snapshot = None
         for _ in self.JOIN_FRAMES:
             message = self._recv(socket)
+            if message.get("type") == "snapshot":
+                snapshot = message.get("payload") or {}
+                continue
             if message.get("type") != "host_info":
                 continue
             payload = message.get("payload") or {}
@@ -519,6 +563,7 @@ class RoomWriter:
                 raise RoomRefused(
                     f"this room is read-only for you (role "
                     f"{payload.get('role') or 'unknown'})")
+        return snapshot
 
     def _await_result(self, socket: Any, op: Dict[str, Any]) -> None:
         """Read until THIS operation is answered.
@@ -591,8 +636,7 @@ class RoomWriter:
         ops: List[Dict[str, Any]] = []
         for name, value in fields.items():
             op: Dict[str, Any] = {"op": "update_field", "node_id": node_id,
-                                  "field": addressable(name),
-                                  "author": author, "ts": stamp}
+                                  "field": addressable(name), "ts": stamp}
             if value is None:
                 op["remove"] = True
             else:
@@ -605,7 +649,7 @@ class RoomWriter:
         # happened. Sent last means never sent at all in that case.
         if process:
             ops.append({"op": "add_node", "id": process["id"], "node": process,
-                        "author": author, "ts": stamp})
+                        "ts": stamp})
 
         try:
             outcomes = self._send_updates(ops)
@@ -681,19 +725,47 @@ class RoomWriter:
             f"{op.get('node_id') or op.get('id')} within {self.timeout}s")
 
     def has_node(self, node_id: str) -> bool:
-        return self.fallback.has_node(node_id) if self.fallback else False
+        """Asks the ROOM first — see `node` for the round trip that showed why."""
+        return self.node(node_id) is not None
+
+    def _snapshot_node(self, node_id: str) -> Optional[Dict[str, Any]]:
+        """One node, read from the room's own document.
+
+        Opens a connection, reads the join — which is where the snapshot
+        arrives — and closes. One socket per read is the same posture the
+        writes take: this assistant is a CORRESPONDENT, it does not keep a seat
+        in the room, and holding a socket open to answer a question later would
+        put a phone in a pocket into the roster.
+        """
+        from websockets.sync.client import connect
+
+        with connect(self._ws_url(), open_timeout=self.timeout,
+                     close_timeout=self.timeout, max_size=None) as socket:
+            snapshot = self._drain_join(socket)
+        doc = (snapshot or {}).get("doc") or {}
+        for section in (doc.get("graphs") or {}).values():
+            for node in section.get("nodes") or []:
+                if node.get("id") == node_id:
+                    return node
+        return None
 
     def node(self, node_id: str) -> Optional[Dict[str, Any]]:
-        """Through the local container, exactly as `has_node` does.
+        """From the ROOM, and only from the local container when it cannot.
 
-        DECLARED LIMIT, and it is inherited rather than introduced: this client
-        does not hold a snapshot of the room, so what it can read back is what
-        the node's own container has. For a validation that follows a save in
-        the same session that is the same thing; for a field somebody else
-        composed in another session it is not, and the honest consequence is
-        that the validation would find no AI marker and skip the field —
-        reported, not silently guessed.
+        Until 23 September this read the local container always, and the
+        consequence was measured rather than imagined: validating a field on a
+        unit that lives in the room answered «non trovo la US 3015 in questo
+        grafo». The room is where the unit is; the room is what gets asked.
+
+        Unreachable falls back, like everything else here: offline-first means
+        the network is the optional part.
         """
+        try:
+            found = self._snapshot_node(node_id)
+        except Exception:                             # unreachable, refused
+            return self.fallback.node(node_id) if self.fallback else None
+        if found is not None:
+            return found
         return self.fallback.node(node_id) if self.fallback else None
 
     def study_name(self) -> Optional[str]:

@@ -86,6 +86,14 @@ class Scheda:
         self.source_language = str(template.get("source_language") or "")
         self.standard: Dict[str, Any] = dict(template.get("standard") or {})
         self.fields: List[Dict[str, Any]] = list(template.get("fields") or [])
+        #: WHICH FIELDS SPELL THE UNIT'S NAME, from `identity.human_key`
+        #: (SPEC §1.2). The module needs it so the box that says which unit the
+        #: record is about is the definition's own, not a second one beside it
+        #: — and it cannot be `us` hard-coded here, because the Spanish sheet
+        #: calls it `contexto`.
+        identity = template.get("identity") or {}
+        self.human_key: List[str] = list(
+            ((identity.get("human_key") or {}).get("fields")) or [])
         self.paragraphs: List[Dict[str, Any]] = list(
             template.get("paragraphs") or [])
         if not self.fields:
@@ -168,6 +176,7 @@ class Scheda:
                  "fields": list(p.get("fields") or [])}
                 for p in self.paragraphs],
             "fields": [self._field_for_browser(f, lang) for f in self.fields],
+            "human_key": list(self.human_key),
             "counts": self.counts(),
         }
 

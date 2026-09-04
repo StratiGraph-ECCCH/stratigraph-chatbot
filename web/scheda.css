@@ -1,0 +1,488 @@
+/* La scheda, e il telaio che la rende vivibile.
+ *
+ * ── OGNI COLORE È UN RUOLO ──────────────────────────────────────────────────
+ * Non c'è un `#`, un `rgb(` o un nome di colore CSS in questo file, e non ce ne
+ * deve essere: i ruoli stanno in `brand/stratigraph-theme.css`, che è una copia
+ * propagata da `sync-brand.sh`. Se manca un ruolo si riporta, non si inventa un
+ * esadecimale — un ruolo mancante è un'informazione sul tema.
+ *
+ * ── LA TRASPOSIZIONE NON È LETTERALE ────────────────────────────────────────
+ * La struttura viene da pyarchinit-mini: barra in alto, colonna a sinistra in
+ * sezioni, area di lavoro. È una convenzione e non è di nessuno, ed è il motivo
+ * per cui quell'interfaccia si capisce in tre secondi.
+ *
+ * Il MARKUP no: quel progetto è GPL-2.0 e le sue classi `pam-*` sono codice
+ * protetto. Nessun suo file è stato aperto per copiarne righe.
+ *
+ * E il linguaggio VISIVO è il nostro. Le loro schermate hanno dieci riquadri di
+ * dieci colori sul cruscotto e card in gradiente viola: quello dice «questo è
+ * pyarchinit». Qui c'è UNA superficie, la gerarchia è fatta con il peso e lo
+ * spazio, e l'accento (`--sg-accent`) compare dove serve davvero — sul bottone
+ * che salva, sul campo che stai compilando, e in nient'altro.
+ *
+ * ── LE TRE SOGLIE ───────────────────────────────────────────────────────────
+ * Il modo è un attributo, `data-sg-mode`, su `#surface`. Si PROPONE dalla
+ * larghezza e si può forzare, quindi non può essere una media query: una media
+ * query non si lascia contraddire, e un telefono grande in laboratorio o un
+ * portatile su un tavolino in cantiere sono i due casi in cui la larghezza
+ * sbaglia.
+ */
+
+/* ── il telaio ───────────────────────────────────────────────────────────── */
+
+#surface {
+  display: grid;
+  min-height: 100dvh;
+  grid-template-areas: "bar bar" "nav work";
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto 1fr;
+}
+
+.topbar {
+  grid-area: bar;
+  display: flex;
+  align-items: center;
+  gap: var(--sg-space-3);
+  padding: var(--sg-space-2) var(--sg-space-3);
+  background: var(--sg-surface);
+  border-bottom: 1px solid var(--sg-line);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.topbar .mark { display: flex; align-items: center; gap: var(--sg-space-2); }
+.topbar .mark b {
+  font-family: var(--sg-font-display);
+  font-weight: var(--sg-weight-headline);
+}
+.topbar .spacer { flex: 1; }
+.topbar-controls { display: flex; align-items: center; gap: var(--sg-space-2); }
+
+/* Sul telefono la barra tiene solo il marchio e lo stato: il resto è nella
+   colonna, dove il pollice arriva. */
+#surface[data-sg-mode="phone"] .topbar { gap: var(--sg-space-2); }
+#surface[data-sg-mode="phone"] .whoroom { display: none; }
+#surface[data-sg-mode="phone"] #app-subtitle { display: none; }
+#nav-controls-host {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sg-space-2);
+  padding: 0 var(--sg-space-3) var(--sg-space-2);
+}
+
+/* CHI SEI e DOVE SEI, in alto e sempre. In una stanza condivisa sono le due
+   cose che decidono se quello che scrivi conta: senza identità il contratto
+   rifiuta, e senza stanza non si sa dove finisce. */
+.whoroom {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: var(--sg-text-xs);
+  color: var(--sg-muted);
+  line-height: 1.2;
+}
+.whoroom .orcid { font-family: var(--sg-font-mono); }
+.whoroom .room { color: var(--sg-text); }
+
+/* ── la colonna, in sezioni con intestazione ─────────────────────────────── */
+
+.sidenav {
+  grid-area: nav;
+  width: 15rem;
+  padding: var(--sg-space-3) 0;
+  background: var(--sg-surface-sunk);
+  border-right: 1px solid var(--sg-line);
+  overflow-y: auto;
+}
+.sidenav h3 {
+  margin: var(--sg-space-4) var(--sg-space-3) var(--sg-space-1);
+  font-family: var(--sg-font-sans);
+  font-size: var(--sg-text-xs);
+  font-weight: var(--sg-weight-subtitle);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--sg-muted);
+}
+.sidenav h3:first-child { margin-top: 0; }
+.sidenav a, .sidenav button.navitem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--sg-space-2) var(--sg-space-3);
+  border: 0;
+  background: none;
+  color: var(--sg-text);
+  font: inherit;
+  cursor: pointer;
+}
+.sidenav .navitem[aria-current="true"] {
+  background: var(--sg-surface);
+  box-shadow: inset 3px 0 0 var(--sg-accent);
+  font-weight: var(--sg-weight-subtitle);
+}
+.sidenav .navitem:hover { background: var(--sg-surface); }
+.sidenav .count {
+  float: right;
+  font-family: var(--sg-font-mono);
+  font-size: var(--sg-text-xs);
+  color: var(--sg-muted);
+}
+
+/* ── e le regole EREDITATE, che vanno dette invece che subite ────────────────
+ *
+ * `shell.css` viene dalla pagina di prima, che era un'app a UNA COLONNA per
+ * telefono, e porta due regole scritte per quel mondo:
+ *
+ *     main   { max-width: 640px; margin: 0 auto; }
+ *     button { width: 100%; text-align: left; }
+ *
+ * La prima teneva la scheda a 608px dentro un'area di lavoro da 1185 — misurato
+ * nel browser, non dedotto: la scrivania mostrava due colonne strette in mezzo
+ * a un campo di vuoto. La seconda fa di ogni chip e di ogni bottoncino una
+ * barra piena.
+ *
+ * Sono giuste per la superficie a gesti e sbagliate per questa, quindi si
+ * annullano QUI, sulle classi nuove, invece di cambiarle là: cambiarle là
+ * ridisegnerebbe i tre bottoni grossi che una persona preme con i guanti. */
+.work {
+  grid-area: work;
+  padding: var(--sg-space-4);
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+}
+.chip, .iconbtn, .box .validate, .sheet .risky {
+  width: auto;
+  margin-bottom: 0;
+  text-align: center;
+  box-shadow: none;
+}
+.sheet .risky, .box .validate { white-space: nowrap; }
+.thumbbar button { margin-bottom: 0; text-align: center; box-shadow: none; }
+.sidenav .navitem { margin-bottom: 0; box-shadow: none; border-radius: 0; }
+
+/* ── la scheda ───────────────────────────────────────────────────────────── */
+
+.sheet {
+  background: var(--sg-surface);
+  border: 1px solid var(--sg-line);
+  border-radius: var(--sg-radius);
+  box-shadow: var(--sg-shadow);
+  padding: var(--sg-space-4);
+  min-width: 0;
+}
+.sheet > header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sg-space-2);
+  margin-bottom: var(--sg-space-3);
+  padding-bottom: var(--sg-space-2);
+  border-bottom: 1px solid var(--sg-line);
+}
+.sheet h2 {
+  margin: 0;
+  font-family: var(--sg-font-display);
+  font-size: var(--sg-text-lg);
+  font-weight: var(--sg-weight-headline);
+}
+.sheet .std {
+  font-family: var(--sg-font-mono);
+  font-size: var(--sg-text-xs);
+  color: var(--sg-muted);
+}
+
+.para { margin: 0 0 var(--sg-space-4); border: 0; padding: 0; }
+.para > legend {
+  font-size: var(--sg-text-xs);
+  font-weight: var(--sg-weight-subtitle);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--sg-muted);
+  padding: 0 0 var(--sg-space-1);
+}
+
+.box { margin: 0 0 var(--sg-space-3); }
+.box > label {
+  display: block;
+  font-size: var(--sg-text-xs);
+  font-weight: var(--sg-weight-subtitle);
+  letter-spacing: .04em;
+  color: var(--sg-muted);
+  margin-bottom: 2px;
+}
+/* L'obbligatorietà viene dalla DEFINIZIONE, non da una lista qui: il pallino
+   compare perché `required` è vero nel dato. */
+.box.required > label::after {
+  content: " •";
+  color: var(--sg-accent);
+}
+.box input, .box textarea, .box select {
+  width: 100%;
+  padding: var(--sg-space-2);
+  font: inherit;
+  color: var(--sg-text);
+  background: var(--sg-bg);
+  border: 1px solid var(--sg-line);
+  border-radius: var(--sg-radius-sm);
+}
+.box textarea { min-height: 4.5rem; resize: vertical; }
+.box input:focus, .box textarea:focus, .box select:focus {
+  outline: 2px solid var(--sg-accent);
+  outline-offset: 1px;
+}
+.box .help {
+  margin: 2px 0 0;
+  font-size: var(--sg-text-xs);
+  color: var(--sg-muted);
+}
+.box .voc {
+  font-family: var(--sg-font-mono);
+  font-size: var(--sg-text-xs);
+  color: var(--sg-quiet);
+}
+
+/* ── L'AUTORIALITÀ SI VEDE ───────────────────────────────────────────────── */
+
+/* Un campo che un modello ha composto e nessuno ha validato NON ha l'aria di un
+   campo qualunque: ha il bordo dell'avviso e lo dice a parole. La spunta arriva
+   solo dopo che una persona l'ha guardato — una spunta accanto a
+   un'affermazione non verificata sarebbe un'affermazione che nessuno ha fatto. */
+.box.ai input, .box.ai textarea {
+  border-color: var(--sg-warn);
+  border-left-width: 3px;
+}
+.box .authored {
+  display: none;
+  align-items: center;
+  gap: var(--sg-space-2);
+  margin-top: var(--sg-space-1);
+  font-size: var(--sg-text-xs);
+}
+.box.ai .authored, .box.validated .authored { display: flex; }
+.box.ai .authored { color: var(--sg-warn); }
+.box.validated .authored { color: var(--sg-ok-ink); }
+.box.validated input, .box.validated textarea {
+  border-color: var(--sg-ok);
+  border-left-width: 3px;
+}
+.box .validate {
+  padding: 2px var(--sg-space-2);
+  font-size: var(--sg-text-xs);
+  border: 1px solid currentColor;
+  border-radius: var(--sg-radius-pill);
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.box.validated .validate { display: none; }
+
+/* ── incompleta PER COSTRUZIONE: uno stato, non un errore ────────────────── */
+
+.completeness {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sg-space-2);
+  margin: 0 0 var(--sg-space-3);
+  padding: var(--sg-space-2) var(--sg-space-3);
+  border-radius: var(--sg-radius-sm);
+  font-size: var(--sg-text-sm);
+  background: var(--sg-surface-sunk);
+  color: var(--sg-muted);
+  border-left: 3px solid var(--sg-info);
+}
+.completeness b { color: var(--sg-text); font-weight: var(--sg-weight-subtitle); }
+/* NON `--sg-warn`: una scheda da trincea è incompleta perché è il mestiere, e
+   dipingerla come un problema insegnerebbe a chi scava che sta sbagliando. */
+.completeness.blocking { border-left-color: var(--sg-warn); }
+
+/* ── il modo: TELEFONO ───────────────────────────────────────────────────── */
+
+/* Una colonna, un campo per volta, e i bersagli nella METÀ BASSA. La colonna
+   di navigazione si ritira e si riapre dalla barra in basso — cioè col
+   pollice, che è l'unica cosa disponibile quando l'altra mano tiene la
+   cazzuola. */
+#surface[data-sg-mode="phone"] { grid-template-areas: "bar" "work"; grid-template-columns: 1fr; }
+#surface[data-sg-mode="phone"] .sidenav {
+  position: fixed;
+  inset: auto 0 0 0;
+  width: auto;
+  max-height: 70dvh;
+  border-right: 0;
+  border-top: 1px solid var(--sg-line);
+  border-radius: var(--sg-radius-lg) var(--sg-radius-lg) 0 0;
+  box-shadow: var(--sg-shadow-lifted);
+  transform: translateY(101%);
+  transition: transform .18s ease-out;
+  z-index: 30;
+  padding-bottom: calc(var(--sg-space-6) + env(safe-area-inset-bottom));
+}
+#surface[data-sg-mode="phone"] .sidenav[data-open="true"] { transform: translateY(0); }
+#surface[data-sg-mode="phone"] .work {
+  padding: var(--sg-space-2);
+  /* spazio per la barra dei pollici, che è fissa */
+  padding-bottom: calc(var(--sg-space-6) * 2 + env(safe-area-inset-bottom));
+}
+#surface[data-sg-mode="phone"] .sheet {
+  border: 0; box-shadow: none; padding: var(--sg-space-2); background: none;
+}
+/* un campo per volta */
+#surface[data-sg-mode="phone"] .para { display: none; }
+#surface[data-sg-mode="phone"] .box { display: none; }
+#surface[data-sg-mode="phone"] .box[data-current="true"] { display: block; }
+#surface[data-sg-mode="phone"] .para[data-has-current="true"] { display: block; }
+#surface[data-sg-mode="phone"] .box[data-current="true"] > label {
+  font-size: var(--sg-text-base);
+  color: var(--sg-text);
+}
+#surface[data-sg-mode="phone"] .box[data-current="true"] input,
+#surface[data-sg-mode="phone"] .box[data-current="true"] textarea {
+  font-size: var(--sg-text-lg);
+  padding: var(--sg-space-3);
+}
+
+/* LA BARRA DEI POLLICI. Visibile solo sul telefono, fissa in basso, e dentro
+   ci sono SOLO azioni non distruttive: indietro, avanti, detta, salva, e il
+   bottone che apre la colonna. Un `type="button"` alto 48px è il minimo che si
+   prende con una mano sola in movimento. */
+.thumbbar { display: none; }
+#surface[data-sg-mode="phone"] .thumbbar {
+  position: fixed;
+  inset: auto 0 0 0;
+  display: flex;
+  gap: var(--sg-space-2);
+  padding: var(--sg-space-2);
+  padding-bottom: calc(var(--sg-space-2) + env(safe-area-inset-bottom));
+  background: var(--sg-surface);
+  border-top: 1px solid var(--sg-line);
+  z-index: 25;
+}
+.thumbbar button {
+  flex: 1;
+  min-height: 48px;
+  font: inherit;
+  color: var(--sg-text);
+  background: var(--sg-bg);
+  border: 1px solid var(--sg-line);
+  border-radius: var(--sg-radius);
+  cursor: pointer;
+}
+/* IL BOTTONE CHE SALVA — e il colore è MISURATO, non scelto.
+ *
+ * La prima versione era `--sg-off-white` su `--sg-accent`. Il tema lo dice
+ * («i tre accenti digitali sono RIEMPIMENTI, mai inchiostro di testo») e il
+ * calcolo lo conferma:
+ *
+ *     off-white su burnt-orange (--sg-accent)        2.98  insufficiente
+ *     white     su burnt-orange                      3.53  solo AA-large
+ *     off-white su terracotta (--sg-accent-quiet)    5.00  AA
+ *
+ * Una PAROLA su un riempimento vuole 4.5, e questo bottone porta una parola —
+ * in trincea un'icona sola non basta. Quindi il riempimento è
+ * `--sg-accent-quiet`, che è l'unica coppia di soli token che regge un testo, e
+ * l'accento resta come BARRA a sinistra: il significato senza il problema di
+ * contrasto. */
+.thumbbar button.save {
+  flex: 2;
+  background: var(--sg-accent-quiet);
+  border-color: var(--sg-accent-quiet);
+  border-left: 4px solid var(--sg-accent);
+  color: var(--sg-off-white);
+  font-weight: var(--sg-weight-subtitle);
+}
+.thumbbar .step {
+  font-family: var(--sg-font-mono);
+  font-size: var(--sg-text-xs);
+  color: var(--sg-muted);
+  align-self: center;
+  padding: 0 var(--sg-space-1);
+}
+
+/* LE AZIONI DISTRUTTIVE NON STANNO DOVE CADE IL POLLICE. Vivono in cima alla
+   scheda, sopra la piega dei bersagli, e sono le sole cose fuori dalla barra. */
+.sheet .risky {
+  margin-left: auto;
+  padding: 2px var(--sg-space-2);
+  font-size: var(--sg-text-xs);
+  color: var(--sg-muted);
+  background: none;
+  border: 1px solid var(--sg-line);
+  border-radius: var(--sg-radius-pill);
+  cursor: pointer;
+}
+.sheet .risky:hover { color: var(--sg-warn); border-color: var(--sg-warn); }
+
+/* ── il modo: TABLET — una facciata intera ───────────────────────────────── */
+
+#surface[data-sg-mode="tablet"] .sidenav { width: 13rem; }
+#surface[data-sg-mode="tablet"] .sheet { max-width: 46rem; }
+
+/* ── il modo: DESKTOP — due pagine affiancate su 16:9 ────────────────────── */
+
+/* Due colonne di scheda, non due schede: è UNA scheda che occupa due facciate,
+   come sulla carta. `column-fill: auto` con un'altezza legata alla viewport è
+   ciò che fa cadere la seconda metà nella colonna di destra invece di allungare
+   la pagina — che su un 16:9 è lo spazio che c'è. */
+/* MISURATO NEL BROWSER, e la prima versione era rotta: `column-fill: auto` con
+ * un'altezza legata alla viewport non ferma il contenuto a due colonne — ne
+ * crea altre, che escono dalla scheda a destra e finiscono fuori dallo sfondo.
+ * Su una US da 59 campi si vedevano QUOTE e MODO DI FORMAZIONE sospesi nel
+ * vuoto accanto al foglio.
+ *
+ * Due colonne BILANCIATE: la scheda cresce in verticale e si scorre, che è ciò
+ * che fa anche un foglio di carta girato. «Due pagine affiancate» è la
+ * disposizione, non una promessa che tutto entri in una schermata. */
+#surface[data-sg-mode="desktop"] .sheet.two .paras {
+  columns: 2;
+  column-gap: var(--sg-space-5);
+  column-rule: 1px solid var(--sg-line);
+}
+#surface[data-sg-mode="desktop"] .sheet.two .para { break-inside: avoid; }
+#surface[data-sg-mode="desktop"] .sheet { max-width: 72rem; }
+
+/* ── il selettore di modo, e il tema ─────────────────────────────────────── */
+
+.chips { display: flex; gap: 2px; }
+.chip {
+  padding: var(--sg-space-1) var(--sg-space-2);
+  font-size: var(--sg-text-xs);
+  color: var(--sg-muted);
+  background: var(--sg-bg);
+  border: 1px solid var(--sg-line);
+  cursor: pointer;
+}
+.chip:first-child { border-radius: var(--sg-radius-sm) 0 0 var(--sg-radius-sm); }
+.chip:last-child { border-radius: 0 var(--sg-radius-sm) var(--sg-radius-sm) 0; }
+.chip[aria-pressed="true"] {
+  color: var(--sg-text);
+  background: var(--sg-surface-sunk);
+  border-color: var(--sg-accent);
+  font-weight: var(--sg-weight-subtitle);
+}
+/* Il modo PROPOSTO dalla larghezza si distingue da quello scelto: un puntino,
+   perché «te l'ho proposto io» e «l'hai scelto tu» non sono la stessa cosa e la
+   seconda sopravvive a un ricaricamento. */
+.chip[data-proposed="true"]::after { content: " ·"; color: var(--sg-quiet); }
+
+.iconbtn {
+  min-width: 40px;
+  min-height: 40px;
+  font: inherit;
+  color: var(--sg-text);
+  background: var(--sg-bg);
+  border: 1px solid var(--sg-line);
+  border-radius: var(--sg-radius-sm);
+  cursor: pointer;
+}
+
+/* ── quando il nodo non serve schede, o non ne ha quella chiesta ─────────── */
+
+.saysit {
+  padding: var(--sg-space-3);
+  border-radius: var(--sg-radius-sm);
+  background: var(--sg-surface-sunk);
+  color: var(--sg-muted);
+  border-left: 3px solid var(--sg-quiet);
+  font-size: var(--sg-text-sm);
+}

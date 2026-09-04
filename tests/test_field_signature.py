@@ -423,7 +423,16 @@ def test_the_vendored_theme_carries_the_hidden_rule():
     or the day the theme changes there would be two answers."""
     theme = (WEB / "brand" / "stratigraph-theme.css").read_text(encoding="utf-8")
     assert "[hidden] { display: none !important; }" in theme
-    page_style = PAGE[PAGE.index("<style>"):PAGE.index("</style>")]
+    # The page has no `<style>` of its own since 2026-09-23 — the CSS lives in
+    # `shell.css` and `scheda.css`. The property is the same and now covers
+    # both: no stylesheet of this app carries a second copy of the rule.
+    import pathlib as _pathlib
+    web = _pathlib.Path(__file__).resolve().parent.parent / "web"
+    assert "<style>" not in PAGE, (
+        "the page grew a style block again: the CSS was extracted so that "
+        "there is one place to look")
+    page_style = "\n".join((web / name).read_text(encoding="utf-8")
+                            for name in ("shell.css", "scheda.css"))
     assert "[hidden] { display: none" not in page_style, \
         "the rule belongs to the theme; a local copy is a second source of truth"
 

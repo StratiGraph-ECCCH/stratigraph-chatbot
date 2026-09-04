@@ -74,11 +74,21 @@ def test_the_page_reaches_for_roles_and_not_for_hexes():
     variable, and the ink on a filled control is white."""
     page = PAGE.read_text(encoding="utf-8")
     found = _hexes(page) | {h.upper() for h in re.findall(r"#[0-9A-Fa-f]{3}\b", page)}
-    assert found <= {"#F1EBE3", "#2E2D2C", "#FFFFFF"}, found
+    assert found <= {"#F1EBE3", "#2E2D2C"}, found
+    # …and the extracted stylesheet keeps the one exception it always had.
+    styles = (WEB / "shell.css").read_text(encoding="utf-8")
+    in_css = _hexes(styles) | {h.upper() for h in
+                               re.findall(r"#[0-9A-Fa-f]{3}\b", styles)}
+    assert in_css <= {"#FFFFFF"}, in_css
     for hexed in ("#F1EBE3", "#2E2D2C"):
         assert f'content="{hexed}"' in page, f"{hexed} outside a theme-color"
-    # …and it does use the roles
-    assert page.count("var(--sg-") > 40
+    # …and the app DOES reach for the roles. Counted across the stylesheets now
+    # that the CSS is not in the page, and the bar is raised rather than kept:
+    # the scheda brought a whole surface, and it is built from tokens too.
+    everywhere = "\n".join(
+        (WEB / name).read_text(encoding="utf-8")
+        for name in ("shell.css", "scheda.css"))
+    assert everywhere.count("var(--sg-") > 120, everywhere.count("var(--sg-")
 
 
 def test_every_colour_in_the_theme_is_the_guidebooks_or_declared_derived():
@@ -102,8 +112,13 @@ def test_the_three_faces_are_the_guidebooks():
 def test_the_primary_label_is_large_enough_for_its_own_contrast():
     """White on Burnt Orange is 3.53 — below AA for normal text, above the 3:1
     that applies to LARGE text. So the size is load-bearing, and shrinking it
-    silently breaks the contrast."""
-    page = PAGE.read_text(encoding="utf-8")
+    silently breaks the contrast.
+
+    READ FROM `shell.css` since 2026-09-23: the page's `<style>` block was
+    extracted into a file of its own when the scheda arrived. The property is
+    unchanged and so is the number — only the file moved.
+    """
+    page = (WEB / "shell.css").read_text(encoding="utf-8")
     block = page[page.index("button.primary {"):]
     block = block[:block.index("}")]
     assert "font-size: 19px" in block and "font-weight: 600" in block, block
@@ -149,5 +164,9 @@ def test_the_dom_handles_the_script_needs_are_all_still_there():
     for handle in ("state", "rec", "shoot", "where", "hint", "typed", "send",
                    "shot", "said", "answer", "queue", "camera"):
         assert f'id="{handle}"' in page, handle
+    # The state classes live in `shell.css` since the split; the ids live in the
+    # page. Two files, one property: the script still finds everything it
+    # reaches for.
+    styles = (WEB / "shell.css").read_text(encoding="utf-8")
     for klass in (".answer.ok", ".answer.bad", ".state.off"):
-        assert klass in page, klass
+        assert klass in styles, klass

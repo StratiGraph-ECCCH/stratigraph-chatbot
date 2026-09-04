@@ -514,6 +514,103 @@ def say(request: Request, body: Say = Body(...)) -> Answer:
     return _run(body.transcript, body.slots, _author(request))
 
 
+class SchedaIn(BaseModel):
+    """A filled scheda, on its way to the tools that already exist."""
+
+    #: The unit the scheda is about. Not derived from the values, even when a
+    #: field of the definition holds it: WHICH unit a record is about is the
+    #: caller's statement, and reading it out of a box would make a typo in that
+    #: box silently address a different unit.
+    us: str = ""
+    #: `{field id: value}`, with the ids the DEFINITION declares. Anything else
+    #: is refused by `scheda.slots_for` — a form is not a way to put arbitrary
+    #: keys into `data`.
+    values: Dict[str, Any] = Field(default_factory=dict)
+    #: `{field id: "human"|"ai"}`. Absent means human: whoever said nothing
+    #: wrote it themselves.
+    authored_by: Dict[str, str] = Field(default_factory=dict)
+    #: Which model composed the `ai` ones — what stays legible after a person
+    #: validates them.
+    model: str = ""
+    #: True the first time, so a unit that does not exist yet gets created
+    #: before its boxes are filled. Declared by the caller rather than guessed
+    #: from whether the unit is there: «create it if missing» is how a mistyped
+    #: number becomes a new unit, which is the whole reason `update_su` exists.
+    create: bool = False
+
+
+@v1.post("/scheda/{scheda_id}", response_model=Answer, tags=["scheda"])
+def submit_scheda(scheda_id: str, request: Request,
+                  body: SchedaIn = Body(...)) -> Answer:
+    """A filled scheda becomes the SAME act a voice would have produced.
+
+    THE POINT OF THE WHOLE ARC, in one route: this does not write to the graph.
+    It turns a form into the slots of `create_su` / `update_su` and hands them
+    to `invoke`, exactly as `/say` hands it what a sentence produced. The
+    browser talks to the service; the service talks to the tools; the tools talk
+    to the writer — and `tests/test_one_write_path.py` keeps that the only road.
+
+    So there is no new write path here, and there is no second place that knows
+    what a field means: `app/scheda.py` reads the definition, and the definition
+    came from the standard.
+    """
+    from . import scheda as schede
+
+    found = schede.find(scheda_id)
+    if found is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"questo nodo non serve una scheda «{scheda_id}»")
+    if not (body.us or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="una scheda è di un'unità: manca il numero")
+
+    author = _author(request)
+    try:
+        slots = schede.slots_for(found, body.values, us=body.us)
+    except schede.SchedaError as problem:
+        raise HTTPException(status_code=400, detail=str(problem)) from problem
+
+    # A unit has to exist before its boxes can be filled — `update_field`
+    # refuses a node that is not there, which is the property that makes an
+    # update an update. So a first save is two acts, in this order, and the
+    # SECOND one is what the answer reports: the creation is a precondition, the
+    # filling is what the person did.
+    if body.create:
+        made = invoke(REGISTRY.get("create_su"),
+                      {"us": slots["us"]}, author, registry=REGISTRY)
+        if not made.ok:
+            return Answer(ok=False, message=made.message, tool="create_su",
+                          data=made.data)
+
+    slots["authored_by"] = dict(body.authored_by)
+    if body.model:
+        slots["model"] = body.model
+    result: ToolResult = invoke(REGISTRY.get("update_su"), slots, author,
+                                registry=REGISTRY)
+    return Answer(ok=result.ok, message=result.message, tool="update_su",
+                  slots={"us": slots["us"],
+                         "fields": sorted(slots["fields"])},
+                  data=result.data)
+
+
+class ValidateIn(BaseModel):
+    us: str = ""
+    fields: List[str] = Field(default_factory=list)
+
+
+@v1.post("/validate", response_model=Answer, tags=["scheda"])
+def validate(request: Request, body: ValidateIn = Body(...)) -> Answer:
+    """A person confirms the boxes a model composed. One gesture, one act."""
+    result: ToolResult = invoke(
+        REGISTRY.get("validate_field"),
+        {"us": body.us, "fields": list(body.fields)},
+        _author(request), registry=REGISTRY)
+    return Answer(ok=result.ok, message=result.message, tool="validate_field",
+                  data=result.data)
+
+
 @v1.post("/listen", response_model=Answer, tags=["assistant"])
 async def listen(request: Request,
                  audio: UploadFile = File(...),
@@ -671,6 +768,42 @@ def service_worker() -> Any:
     source = source.replace("__SHELL_FILES__", _json.dumps(files))
     source = source.replace("__SHELL_VERSION__", digest.hexdigest()[:12])
     return Response(content=source, media_type="application/javascript")
+
+
+@public.get("/{shell_file:path}", tags=["device"], include_in_schema=False)
+def shell_file(shell_file: str) -> Any:
+    """Any file of the shell, from `web/`.
+
+    ONE DIRECTORY, ONE SOURCE. `_shell_files` decides what the service worker
+    precaches; this decides what the node serves, and they read the same
+    directory with the same suffix allowlist. Two lists would be two answers,
+    and the failure mode is precisely the one §3 is about: a file that is
+    cached and not served, or served and not cached, and neither shows up until
+    somebody is in a trench.
+
+    Registered LAST among the public routes so `/`, `/health` and `/v1/...`
+    match first — a catch-all declared earlier would swallow them.
+
+    The suffix allowlist is what keeps this from being a directory browser: a
+    `.py` or a `.md` next to the page is not the shell, and the resolved path is
+    checked to be INSIDE `web/` so `..` cannot walk out of it.
+    """
+    web = pathlib.Path(__file__).resolve().parent.parent / "web"
+    candidate = (web / shell_file).resolve()
+    try:
+        candidate.relative_to(web.resolve())
+    except ValueError:
+        raise HTTPException(status_code=404, detail="not part of the shell")
+    if (not candidate.is_file()
+            or candidate.name in _NOT_SHELL
+            or candidate.suffix.lower() not in _SHELL_SUFFIXES):
+        raise HTTPException(status_code=404, detail="not part of the shell")
+    kind = {".css": "text/css", ".js": "application/javascript",
+            ".mjs": "application/javascript", ".html": "text/html",
+            ".svg": "image/svg+xml", ".json": "application/json",
+            ".webmanifest": "application/manifest+json"}.get(
+                candidate.suffix.lower(), "application/octet-stream")
+    return FileResponse(candidate, media_type=kind)
 
 
 # The BRAND, served beside the page that asks for it. Static files, no route of
