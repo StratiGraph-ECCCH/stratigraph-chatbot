@@ -14,7 +14,17 @@
 //
 // ~190 KB for eight woff2 and a stylesheet: the price of not depending on a
 // network, paid once, on a device that will spend its day without one.
-const SHELL = "sg-shell-v5";
+// THE CACHE NAME IS GENERATED, NOT BUMPED BY HAND.
+//
+// `__SHELL_VERSION__` is substituted by the node when it serves this file (see
+// `app/main.py::service_worker`) and is a digest of the shell's actual bytes.
+// Hand-bumping a version is a step somebody forgets, and forgetting it means a
+// device in a trench keeps serving yesterday's page from cache with no way to
+// know — the worst shape of an offline bug, because it looks like it works.
+//
+// Left as a literal when nothing substitutes it, so opening this file straight
+// from disk still gives a working worker.
+const SHELL = "sg-shell-__SHELL_VERSION__";
 
 // WHERE THIS WORKER LIVES — `/` in development, `/chat/` behind the node's Caddy.
 //
@@ -26,20 +36,21 @@ const SHELL = "sg-shell-v5";
 // worker's scope.
 const BASE = new URL("./", self.location.href).pathname;
 
-const SHELL_FILES = [
-  "./",
-  "./brand/stratigraph-theme.css",
-  "./brand/logo/favicon-deep-charcoal.svg",
-  "./brand/logo/favicon-off-white.svg",
-  "./brand/fonts/erode-latin-400-normal.woff2",
-  "./brand/fonts/erode-latin-500-normal.woff2",
-  "./brand/fonts/erode-latin-600-normal.woff2",
-  "./brand/fonts/ibm-plex-sans-latin-400-normal.woff2",
-  "./brand/fonts/ibm-plex-sans-latin-500-normal.woff2",
-  "./brand/fonts/ibm-plex-sans-latin-600-normal.woff2",
-  "./brand/fonts/ibm-plex-mono-latin-400-normal.woff2",
-  "./brand/fonts/ibm-plex-mono-latin-500-normal.woff2",
-];
+// THE PRECACHE LIST IS GENERATED FROM `web/`, NOT WRITTEN HERE.
+//
+// It used to be these twelve lines by hand, and that was honest while the
+// surface was one file. It stops being honest the moment the front-end has
+// parts: every file added is one more thing that can fail to be in the cache,
+// and the failure is invisible until somebody is in a trench with no signal.
+//
+// `__SHELL_FILES__` is substituted by the node with what is actually on disk
+// under `web/` (`app/main.py::service_worker`). A font weight added to the
+// brand, or a module added to the page, is cached because it is THERE — not
+// because somebody remembered to add a line.
+//
+// The literal below is the fallback for reading this file straight from disk:
+// the page and the theme, which is the minimum that makes the app open.
+const SHELL_FILES = __SHELL_FILES__ || ["./", "./brand/stratigraph-theme.css"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(SHELL)

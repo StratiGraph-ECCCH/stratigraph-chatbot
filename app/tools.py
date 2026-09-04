@@ -34,14 +34,42 @@ defend three years later, when it matters.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+from . import authorship
 from .contract import (GraphDelta, Slot, ToolDescriptor, ToolRegistry,
                        ToolResult, stable_id)
 
 #: The DTC term for "this was made by that act". Not a word invented here: it is
 #: the one `s3dgraphy.publication` already uses for a genesis event.
 DTC_PROCESS = "dtc_process"
+
+def unit_id_for(number: str) -> str:
+    """The id of a stratigraphic unit, from its number — in ONE place.
+
+    `create_su` has always used `f"US{number}"`, a readable id rather than a
+    `stable_id` hash, and that is kept: it is what is already in every graph
+    this assistant has written, and re-minting would orphan them.
+
+    IT LIVES HERE because `update_su` needs the SAME answer. Written twice it
+    was wrong immediately: the second copy said `stable_id("us", number)`, and
+    every update was refused with «non è in questo grafo» against a unit that
+    had just been created two lines above. Caught by a test; it would have been
+    a scheda that silently refused to save.
+
+    KNOWN LIMIT, inherited and declared: the id does not carry `sito`/`area`,
+    though `create_su` stores both in `data`. So two areas with a unit «1» are
+    one node. That is pre-existing behaviour of this service, not a decision
+    taken tonight, and changing it re-mints ids.
+    """
+    return f"US{str(number).strip()}"
+
+
+#: What `update_su` will not change, though the CRDT would let it. `name` is
+#: derived from the unit number and is mentioned in other people's nodes; `id`
+#: is the identity itself. Refused by name rather than silently dropped, because
+#: a form that sent one and got a success would have been told a lie.
+_NOT_UPDATABLE = frozenset({"name", "id", "node_type"})
 
 
 def _now() -> str:
@@ -79,7 +107,7 @@ def make_create_su(graph_writer) -> ToolDescriptor:
 
     def handler(slots: Dict[str, Any], author: Optional[str]) -> ToolResult:
         number = str(slots.get("us") or "").strip()
-        unit_id = f"US{number}"
+        unit_id = unit_id_for(number)
 
         # The library decides what a StratigraphicUnit IS. We ask it, then read
         # what it produced — rather than writing a dict shaped like one.
@@ -172,6 +200,408 @@ def make_create_su(graph_writer) -> ToolDescriptor:
             Slot("area", "string", False, "l'area: una US è unica dentro la sua"),
         ],
         description="Una nuova unità stratigrafica nel grafo condiviso.",
+        service="s3dgraphy", handler=handler)
+
+
+# ── 1bis · update_su — THE EIGHTH, and the first one a SCHEDA needs ─────────
+
+def make_update_su(graph_writer) -> ToolDescriptor:
+    """Correct or complete a unit that already exists.
+
+    ## WHY THIS COULD NOT BE `create_su` WITH MORE SLOTS
+
+    Because of one measured line. `s3dgraphy.crdt.apply_op_to_section`:
+
+        if kind == "add_node":
+            existing = by_id.get(node_id)
+            if existing is None:
+                nodes.append(payload)
+                return OpResult(True, "added", node_id)
+
+    **`add_node` on an id that is not there CREATES it.** So a scheda that
+    corrected «US 21» when the unit in the graph is «US 12» — a mistyped number,
+    a form opened against the wrong study — would not fail: it would quietly
+    mint a new unit with one field in it, under the author's name, and report a
+    success. `update_field` refuses the same thing with «node '…' is not here»,
+    and that refusal **is** the difference between correcting a record and
+    inventing one.
+
+    So this tool is not a convenience over `create_su`. It is the only verb that
+    can say «this unit already exists and I am changing it», and a scheda — which
+    is opened on a unit far more often than it creates one — needs exactly that.
+
+    ## WHAT IT DOES NOT DO
+
+    * **it does not create.** No `add_node` for the unit, ever. If the unit is
+      not there the act is refused and the person is told to create it first;
+    * **it does not rename.** `name` is addressable by the CRDT and is
+      deliberately refused here: «US 12» is derived from the number, and renaming
+      a unit is a different act with different consequences (every mention of it
+      elsewhere). Refused by name, so nobody has to wonder;
+    * **it does not decide what a field means.** The names arrive from the
+      scheda's definition (`app/scheda.py`), which read them from the standard.
+      This tool addresses them and nothing more.
+    """
+
+    def handler(slots: Dict[str, Any], author: Optional[str]) -> ToolResult:
+        number = str(slots.get("us") or "").strip()
+        if not number:
+            return ToolResult(ok=False, message="Mi manca il numero dell'unità.")
+
+        fields = slots.get("fields")
+        if not isinstance(fields, dict) or not fields:
+            return ToolResult(
+                ok=False,
+                message=f"Non mi hai detto che cosa cambiare sulla US {number}.")
+
+        refused = sorted(k for k in fields if str(k).strip() in _NOT_UPDATABLE)
+        if refused:
+            return ToolResult(
+                ok=False,
+                message=(f"Non cambio {', '.join(refused)} da qui: rinominare "
+                         f"un'unità è un altro atto, perché tocca ogni posto "
+                         f"che la nomina."))
+
+        unit_id = unit_id_for(number)
+        process = _process_node("update_su", author, unit_id,
+                                f"US {number}: {len(fields)} campi aggiornati")
+
+        # ── CHI HA COMPOSTO OGNI VALORE, accanto al valore ──────────────────
+        #
+        # Scritta nella STESSA operazione dei campi, non in un secondo giro:
+        # un valore e la sua autorialità che atterrano separatamente sono due
+        # scritture di cui una può fallire, e un campo AI senza il suo
+        # marcatore ha l'aria di un campo qualunque — che è precisamente ciò
+        # che non deve avere.
+        #
+        # Il default è `human`: chi non dice niente ha scritto lui. Marcare AI
+        # per difetto attribuirebbe a una macchina il lavoro di chi scava.
+        marks = authorship.marks_for(fields, slots.get("authored_by"),
+                                     model=slots.get("model"))
+        try:
+            outcomes = graph_writer.update(unit_id, {**fields, **marks},
+                                           author=author, process=process)
+        except Exception as exc:                                 # noqa: BLE001
+            # `FieldRefused` («non esiste») and `RoomRefused` («non puoi
+            # scrivere») both arrive here, and both already carry a sentence
+            # meant for a person: it is passed on rather than replaced.
+            return ToolResult(ok=False, message=str(exc),
+                              data={"us": number, "node_id": unit_id})
+
+        # I marcatori di autorialità NON si contano fra i campi: una persona
+        # che ha compilato due caselle deve leggere «2 campi aggiornati», non
+        # quattro.
+        def _is_mark(name: str) -> bool:
+            return f".{authorship.PREFIX}." in f".{name}"
+
+        landed = [o for o in outcomes
+                  if o.get("applied") and not _is_mark(o["field"])]
+        # `idempotent` E `stale` NON sono la stessa risposta, e trattarli
+        # insieme diceva una cosa falsa. Trovato nel giro vero: una scheda
+        # salvata subito dopo la creazione riportava «la stanza ha un valore
+        # più recente» per `area`, quando il valore era **identico** — il
+        # merge aveva risposto `idempotent`, cioè «ce l'ho già così».
+        #
+        #   idempotent → il valore è già quello. Non è un conflitto e non si
+        #                dice: nessuno ha perso niente.
+        #   stale      → qualcun altro ha scritto quella casella più
+        #                recentemente. QUESTO si dice, perché è la cosa che
+        #                una persona più ha bisogno di sapere.
+        already = [o for o in outcomes
+                   if not o.get("applied") and not _is_mark(o["field"])
+                   and o.get("reason") == "idempotent"]
+        held = [o for o in outcomes
+                if not o.get("applied") and not _is_mark(o["field"])
+                and o.get("reason") != "idempotent"]
+        # A field the room kept somebody else's value for is NOT a failure of
+        # this act, and it is not silence either: it is said, because two people
+        # writing the same box is the thing a person most needs to know about.
+        message = f"US {number}: {len(landed)} campi aggiornati."
+        if already:
+            message += f" {len(already)} erano già così."
+        if held:
+            message += (f" {len(held)} non applicati (qualcun altro li ha "
+                        f"scritti più di recente): "
+                        f"{', '.join(o['field'] for o in held)}.")
+
+        return ToolResult(
+            ok=True, message=message,
+            # The delta carries the ACT, not the nodes: nothing was created, and
+            # a delta claiming a node would be a claim that something was.
+            delta=GraphDelta(process=process, author=author),
+            data={"us": number, "node_id": unit_id,
+                  "updated": [o["field"] for o in landed],
+                  "already": [o["field"] for o in already],
+                  "not_applied": held})
+
+    return ToolDescriptor(
+        name="update_su",
+        intents=["aggiorna la scheda", "correggi la us", "modifica la us",
+                 "aggiorna la us", "correggi la scheda"],
+        input_schema=[
+            Slot("us", "string", True, "il numero dell'unità da aggiornare"),
+            Slot("fields", "id", True,
+                 "i campi da cambiare, per nome — quelli della definizione "
+                 "della scheda; un valore nullo svuota la casella"),
+            Slot("authored_by", "id", False,
+                 "chi ha COMPOSTO ciascun valore: `human` o `ai`. Assente "
+                 "vuol dire human, perché chi non dice niente ha scritto lui"),
+            Slot("model", "string", False,
+                 "quale modello, per i campi marcati `ai` — è ciò che resta "
+                 "leggibile dopo che una persona li ha validati"),
+        ],
+        description="Aggiorna i campi di un'unità stratigrafica che esiste già.",
+        service="s3dgraphy", handler=handler)
+
+
+# ── 1ter · relate_su — L'INTENTO CHE MANCAVA ────────────────────────────────
+#
+# Trovato marcando la scheda ICCD in `stratigraph-templates` il 22 settembre:
+# **nessuno dei sette intenti permetteva di registrare un rapporto
+# stratigrafico a voce.** Non era una dimenticanza — `create_su` mette
+# `rapporti` di pyArchInit sotto `extra`, fra le cose «merely carried», e per
+# un ingest ha ragione. Ma una persona in trincea dice «la 12 copre la 18»
+# tutto il giorno, e non aveva un modo di dirlo a questo servizio.
+#
+# Per questo le dieci caselle dei rapporti della US ICCD sono rimaste
+# `unknown` in quella definizione: marcarle `trench` senza un intento che le
+# copra sarebbe stato inventare il criterio. Quando questo tool esiste, il
+# marcatore si mette **là**, nella definizione, non qui.
+
+#: I verbi che una persona dice, e l'arco che ne esce. MISURATO contro
+#: `s3Dgraphy_connections_datamodel.json` — versione **1.6.13**, 54 tipi
+#: dichiarati:
+#:
+#:     is_after  overlies  cuts  fills  abuts  is_bonded_to
+#:     is_physically_equal_to  has_same_time            → PRESENTI
+#:     is_before  is_overlain_by  is_cut_by             → ASSENTI
+#:
+#: **Gli inversi non esistono come tipi di arco.** Esistono solo come etichetta
+#: `reverse` per LEGGERE un arco al contrario. Quindi «la 12 è coperta dalla
+#: 18» non si registra con un arco inverso: si registra **scambiando i capi**,
+#: ed è il motivo per cui la terza voce di ogni coppia qui sotto è `swap`.
+#:
+#: LA MAPPA È LA STESSA di `pyarchinit-mini/pyarchinit_mini/connector/us_ops.py`
+#: (commit `9fb8777`), deliberatamente: lo stesso rapporto detto a voce o
+#: importato da una tabella deve diventare **lo stesso arco**, altrimenti la
+#: porta da cui è entrato si vede nel grafo.
+#:
+#: `overlies` ESISTE e NON è scelto: sarebbe la relazione fisica di COPRE con
+#: la sua mappatura AP11, ma l'adattatore già nell'ecosistema usa `is_after`, e
+#: due porte che scrivono due tipi per la stessa frase è la divergenza che si
+#: scopre sei mesi dopo. Se un giorno si passa a `overlies`, si passa nei due
+#: repository insieme.
+RELATIONS: Dict[str, Tuple[str, str]] = {
+    # ── il verbo canonico, e il suo inverso che scambia i capi ──────────────
+    "copre": ("is_after", "forward"),
+    "coperto da": ("is_after", "swap"),
+    "coperta da": ("is_after", "swap"),
+    "posteriore a": ("is_after", "forward"),
+    "anteriore a": ("is_after", "swap"),
+    "taglia": ("cuts", "forward"),
+    "tagliato da": ("cuts", "swap"),
+    "tagliata da": ("cuts", "swap"),
+    "riempie": ("fills", "forward"),
+    "riempito da": ("fills", "swap"),
+    "riempita da": ("fills", "swap"),
+    "si appoggia a": ("abuts", "forward"),
+    "appoggia a": ("abuts", "forward"),
+    "gli si appoggia": ("abuts", "swap"),
+    # ── simmetrici: i capi si ORDINANO, così due modi di dirlo sono un arco ─
+    "si lega a": ("is_bonded_to", "symmetric"),
+    "uguale a": ("is_physically_equal_to", "symmetric"),
+    "contemporaneo a": ("has_same_time", "symmetric"),
+    "contemporanea a": ("has_same_time", "symmetric"),
+}
+
+
+def edge_id_for(source: str, edge_type: str, target: str) -> str:
+    """`source__type__target` — la convenzione, non un'invenzione.
+
+    `EMStudio/frontend/src/crdt.ts:622` compone esattamente questo quando un
+    arco arriva senza id, e `us_ops.edge_id` fa lo stesso. Usare la stessa
+    convenzione vuol dire che un arco detto a voce e lo stesso arco disegnato a
+    mano nell'editor **sono un arco**, e il secondo si fonde invece di
+    raddoppiare la freccia.
+    """
+    return f"{source}__{edge_type}__{target}"
+
+
+def make_relate_su(graph_writer) -> ToolDescriptor:
+    """«La 12 copre la 18» — un rapporto stratigrafico, a voce.
+
+    Le due unità devono ESISTERE. Un arco fra due id che nessuno può risolvere
+    è peggio di un arco che manca: la matrice lo disegna, e la freccia punta
+    nel vuoto. Quindi si controlla, e se una delle due non c'è si dice quale.
+    """
+
+    def handler(slots: Dict[str, Any], author: Optional[str]) -> ToolResult:
+        left = str(slots.get("us") or "").strip()
+        right = str(slots.get("other") or "").strip()
+        said = str(slots.get("relation") or "").strip().lower()
+
+        if not left or not right:
+            return ToolResult(
+                ok=False,
+                message="Mi servono due unità: «la 12 copre la 18».")
+        if left == right:
+            return ToolResult(
+                ok=False,
+                message=f"La US {left} non può essere in rapporto con se stessa.")
+
+        mapping = RELATIONS.get(said)
+        if mapping is None:
+            return ToolResult(
+                ok=False,
+                message=(f"Non conosco il rapporto «{said}». So: "
+                         + ", ".join(sorted(RELATIONS)) + "."))
+        edge_type, direction = mapping
+
+        source_n, target_n = left, right
+        if direction == "swap":
+            source_n, target_n = right, left
+        source, target = unit_id_for(source_n), unit_id_for(target_n)
+        if direction == "symmetric":
+            # I capi si ORDINANO, così «12 uguale a 18» e «18 uguale a 12»
+            # producono lo stesso id e il secondo si fonde. Senza questo i
+            # simmetrici sarebbero il solo posto che raddoppia ancora.
+            source, target = min(source, target), max(source, target)
+
+        missing = [n for n, node_id in ((source_n, source), (target_n, target))
+                   if not graph_writer.has_node(node_id)]
+        if missing:
+            return ToolResult(
+                ok=False,
+                message=(f"Non trovo la US {' e la US '.join(missing)} in questo "
+                         f"grafo. Un arco verso un'unità che non c'è disegna "
+                         f"una freccia nel vuoto: crea prima l'unità."),
+                data={"missing": missing})
+
+        edge = {"id": edge_id_for(source, edge_type, target),
+                "source": source, "target": target, "edge_type": edge_type}
+        process = _process_node(
+            "relate_su", author, edge["id"],
+            f"US {left} {said} US {right}, detto sul campo")
+        delta = GraphDelta(edges=[edge], process=process, author=author)
+        graph_writer.apply(delta)
+
+        return ToolResult(
+            ok=True,
+            message=f"Registrato: US {left} {said} US {right}.",
+            delta=delta,
+            data={"edge_id": edge["id"], "edge_type": edge_type,
+                  "source": source, "target": target,
+                  # Cosa è stato DETTO, oltre a cosa è stato scritto: chi
+                  # rilegge deve poter vedere che «coperta da» è diventata un
+                  # `is_after` a capi scambiati e non un tipo inverso.
+                  "said": said, "direction": direction})
+
+    return ToolDescriptor(
+        name="relate_su",
+        # LE FRASI SONO LE CHIAVI DELLA MAPPA, non una seconda lista.
+        #
+        # Scritte a mano erano subito divergenti: la mappa conosceva «coperta
+        # da», «riempita da» e «contemporanea a» — le forme al femminile, che
+        # sono quelle che si dicono di una US — e la lista degli intenti no,
+        # quindi «la 12 è coperta dalla 18» non veniva riconosciuta affatto.
+        # Trovato provando le frasi vere, non leggendo il codice.
+        intents=sorted(RELATIONS) + ["rapporto fra", "metti in rapporto"],
+        input_schema=[
+            Slot("us", "string", True, "la prima unità — quella che fa l'azione"),
+            Slot("other", "string", True, "la seconda unità"),
+            Slot("relation", "string", True,
+                 "il rapporto, nelle parole dette: copre, tagliato da, "
+                 "uguale a…"),
+        ],
+        description="Registra un rapporto stratigrafico fra due unità.",
+        service="s3dgraphy", handler=handler)
+
+
+# ── 1quater · validate_field — la conferma umana ────────────────────────────
+
+def make_validate_field(graph_writer) -> ToolDescriptor:
+    """Una persona guarda un campo che il modello ha composto, e se lo assume.
+
+    **LA VALIDAZIONE TRASFERISCE L'AUTORIALITÀ**: da quel momento il campo è di
+    chi l'ha confermato, e il grafo lo dice. Resta scritto che il valore
+    l'aveva proposto una macchina (`composed_by`), perché cancellarlo
+    trasformerebbe una validazione in una riscrittura della storia.
+
+    Non tocca il VALORE. Correggere un campo è `update_su`, e sono due atti
+    diversi: «ho letto e va bene» non è «ho cambiato». Un tool che facesse
+    entrambe le cose renderebbe impossibile distinguerli nel record.
+    """
+
+    def handler(slots: Dict[str, Any], author: Optional[str]) -> ToolResult:
+        number = str(slots.get("us") or "").strip()
+        wanted = slots.get("fields")
+        if isinstance(wanted, str):
+            wanted = [wanted]
+        if not number or not wanted:
+            return ToolResult(
+                ok=False,
+                message="Mi servono l'unità e quali campi hai controllato.")
+
+        unit_id = unit_id_for(number)
+        if not graph_writer.has_node(unit_id):
+            return ToolResult(
+                ok=False,
+                message=f"Non trovo la US {number} in questo grafo.")
+
+        # Lo STATO DI PRIMA, letto dal grafo: la validazione conserva come il
+        # valore era arrivato, e per conservarlo bisogna averlo letto.
+        before = graph_writer.node(unit_id) or {}
+        at = _now()
+        marks: Dict[str, Any] = {}
+        skipped: List[str] = []
+        for field in wanted:
+            said = authorship.read(before, field)
+            if said["by"] != authorship.AI or said["validated"]:
+                # Un campo che nessun modello ha composto non ha bisogno di
+                # essere validato, e dirgli di sì sarebbe mettere una spunta
+                # accanto a un'affermazione che nessuno ha messo in dubbio.
+                skipped.append(field)
+                continue
+            marks[authorship.field_key(field)] = authorship.validated(
+                said, by=author or "", at=at)
+
+        if not marks:
+            return ToolResult(
+                ok=True,
+                message=(f"Su US {number} non c'è niente da validare: "
+                         f"{', '.join(skipped)} "
+                         f"{'non è' if len(skipped) == 1 else 'non sono'} "
+                         f"stat{'o' if len(skipped) == 1 else 'i'} "
+                         f"compost{'o' if len(skipped) == 1 else 'i'} da un "
+                         f"modello."),
+                data={"us": number, "validated": [], "skipped": skipped})
+
+        validated_names = [f for f in wanted if authorship.field_key(f) in marks]
+        process = _process_node(
+            "validate_field", author, unit_id,
+            f"US {number}: {len(marks)} campi validati da una persona")
+        try:
+            graph_writer.update(unit_id, marks, author=author, process=process)
+        except Exception as exc:                                 # noqa: BLE001
+            return ToolResult(ok=False, message=str(exc))
+
+        return ToolResult(
+            ok=True,
+            message=f"US {number}: {len(marks)} campi validati.",
+            delta=GraphDelta(process=process, author=author),
+            data={"us": number, "validated": validated_names,
+                  "skipped": skipped})
+
+    return ToolDescriptor(
+        name="validate_field",
+        intents=["valida", "confermo", "va bene così", "ho controllato",
+                 "valida il campo", "confermo la scheda"],
+        input_schema=[
+            Slot("us", "string", True, "il numero dell'unità"),
+            Slot("fields", "id", True, "i campi controllati"),
+        ],
+        description="Conferma i campi che un modello ha composto: "
+                    "l'autorialità passa alla persona.",
         service="s3dgraphy", handler=handler)
 
 
@@ -539,6 +969,9 @@ def build_registry(graph_writer, asset_store) -> ToolRegistry:
     exactly those two lines."""
     registry = ToolRegistry()
     registry.register(make_create_su(graph_writer))
+    registry.register(make_update_su(graph_writer))
+    registry.register(make_relate_su(graph_writer))
+    registry.register(make_validate_field(graph_writer))
     registry.register(make_which_project(graph_writer))
     registry.register(make_attach_photo(graph_writer, asset_store))
     registry.register(make_ingest_photos(graph_writer, asset_store))

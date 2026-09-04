@@ -37,7 +37,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import (APIRouter, Body, FastAPI, File, Form, HTTPException,
                      Request, UploadFile)
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from .assets import ASSET_STORE
@@ -389,6 +389,70 @@ def list_tools() -> Dict[str, Any]:
             "command_language": COMMAND_LANGUAGE}
 
 
+# ── the schede, as DATA ──────────────────────────────────────────────────────
+#
+# THE CONSTRAINT THIS SERVES, and it is a hard one (E.D., 5 September): a new
+# definition must reach the telephone **without a release of the app**. If
+# showing the Spanish sheet meant rebuilding the front-end, the format would not
+# be travelling as data — it would be getting compiled into the code.
+#
+# So: a directory of definitions, listed and served. Dropping a file in makes it
+# appear. The JS renderer reads what comes back and draws the module; nothing
+# here draws anything, and nothing here knows what a field means to the graph.
+
+@public.get("/v1/schede", tags=["scheda"])
+def list_schede() -> Dict[str, Any]:
+    """Which definitions this node can serve.
+
+    Unauthenticated for the same reason as `/v1/tools`: a definition names a
+    STANDARD, not somebody's excavation. What is behind a scheda is protected;
+    which schede exist is public — and a partner writing a client needs to be
+    able to see it.
+    """
+    from . import scheda as schede
+
+    found = schede.available()
+    return {
+        "schede": [{"id": s.id,
+                    "languages": s.languages,
+                    "standard": {k: s.standard.get(k) for k in
+                                 ("authority", "code", "version", "invented")},
+                    "fields": len(s.fields),
+                    # The three counts, so a client can SEE that a definition
+                    # has not been decided yet instead of discovering it as an
+                    # empty phone form.
+                    "recorded_in": s.counts()}
+                   for s in found],
+        # Said out loud rather than left to be inferred from an empty list: a
+        # node with no definitions is not broken, it is a node that takes
+        # dictation. Absent means the assistant is exactly what it was.
+        "serving": schede.schede_dir() is not None,
+    }
+
+
+@public.get("/v1/schede/{scheda_id}", tags=["scheda"])
+def get_scheda(scheda_id: str, lang: str = "it") -> Dict[str, Any]:
+    """ONE definition, in ONE language, as the data the module is drawn from.
+
+    `lang` is not a preference with a fallback: a language the definition does
+    not declare is a **400**. The alternative is serving a label nobody wrote
+    for that standard, which is the measured defect this whole arc exists to
+    avoid (`pdf_export` in pyarchinit-mini printed «Notifica» where the sheet
+    says FLOTTAZIONE).
+    """
+    from . import scheda as schede
+
+    found = schede.find(scheda_id)
+    if found is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"questo nodo non serve una scheda «{scheda_id}»")
+    try:
+        return found.for_browser(lang)
+    except schede.SchedaError as problem:
+        raise HTTPException(status_code=400, detail=str(problem)) from problem
+
+
 # ── the act ───────────────────────────────────────────────────────────────────
 
 class Say(BaseModel):
@@ -538,13 +602,75 @@ def device() -> Any:
     return FileResponse(page, media_type="text/html")
 
 
+#: What never goes in the precache, whatever is on disk. Two kinds of thing:
+#: the worker itself (the browser fetches it outside the cache, and caching it
+#: is how a worker becomes impossible to update) and anything that is not part
+#: of the shell.
+_NOT_SHELL = {"sw.js"}
+_SHELL_SUFFIXES = {".html", ".css", ".js", ".mjs", ".woff2", ".woff", ".svg",
+                   ".png", ".webmanifest", ".json"}
+
+
+def _shell_files(web: pathlib.Path) -> List[str]:
+    """Everything under `web/` the device needs to open with no signal.
+
+    GENERATED, and the prompt's §4 asks for exactly this: *«se dividi, la cache
+    list si genera, non si scrive a mano»*. A file present is a file cached —
+    so splitting the front-end into modules cannot leave one of them out of the
+    cache, which is the failure that only shows up in a trench.
+
+    `"./"` first, because the shell is the page and the page is served at the
+    app's root rather than as `index.html`.
+    """
+    found = ["./"]
+    for path in sorted(web.rglob("*")):
+        if not path.is_file() or path.name in _NOT_SHELL:
+            continue
+        if path.suffix.lower() not in _SHELL_SUFFIXES:
+            continue
+        relative = path.relative_to(web).as_posix()
+        if relative == "index.html":
+            continue                       # already there as "./"
+        found.append(f"./{relative}")
+    return found
+
+
 @public.get("/sw.js", tags=["device"])
 def service_worker() -> Any:
-    from pathlib import Path
-    worker = Path(__file__).resolve().parent.parent / "web" / "sw.js"
+    """The service worker, with its precache list and cache name SUBSTITUTED.
+
+    Two things are filled in, and both are things a person forgets:
+
+    * **the file list**, from what is on disk (`_shell_files`);
+    * **the cache name**, from a digest of those files' bytes. A hand-bumped
+      version is a step somebody skips, and skipping it leaves a device serving
+      yesterday's page from cache with no way to notice — an offline bug that
+      looks like it works.
+
+    Served as text rather than `FileResponse` because it is now rendered. The
+    file on disk stays a valid worker on its own (the placeholders have literal
+    fallbacks), so it can still be read and reasoned about without a server.
+    """
+    import hashlib
+    import json as _json
+
+    web = pathlib.Path(__file__).resolve().parent.parent / "web"
+    worker = web / "sw.js"
     if not worker.is_file():
         raise HTTPException(status_code=404, detail="no service worker")
-    return FileResponse(worker, media_type="application/javascript")
+
+    files = _shell_files(web)
+    digest = hashlib.sha256()
+    for relative in files:
+        candidate = web / relative.removeprefix("./")
+        if candidate.is_file():
+            digest.update(candidate.read_bytes())
+        else:
+            digest.update(relative.encode("utf-8"))
+    source = worker.read_text(encoding="utf-8")
+    source = source.replace("__SHELL_FILES__", _json.dumps(files))
+    source = source.replace("__SHELL_VERSION__", digest.hexdigest()[:12])
+    return Response(content=source, media_type="application/javascript")
 
 
 # The BRAND, served beside the page that asks for it. Static files, no route of

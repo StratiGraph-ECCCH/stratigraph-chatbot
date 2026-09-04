@@ -41,7 +41,9 @@ class FakeNode:
 
     # the rest of the writer surface, unused here
     def apply(self, delta): pass
+    def update(self, node_id, fields, *, author, process=None): return []
     def has_node(self, node_id): return True
+    def node(self, node_id): return None
     def study_name(self): return "Saggio B"
     def count_units(self): return 1
     def answer_q(self, q): return ""
@@ -74,14 +76,32 @@ def test_the_unit_number_comes_out_of_the_sentence_when_it_is_in_it():
         "costruisci il modello 3D di questa US dalle foto", registry).slots
 
 
-def test_the_registry_now_holds_seven_tools():
-    """Grew by one on 2026-08-30: `open_in_emstudio`, the round-trip's voice.
-    The count is asserted rather than the membership alone, so a tool that
-    appears without anybody deciding to add it shows up here."""
+def test_the_registry_now_holds_ten_tools():
+    """The membership AND the count, so a tool that appears without anybody
+    deciding to add it shows up here.
+
+    It has grown twice, and both times this test is what said so:
+
+    * 2026-08-30 — `open_in_emstudio`, the round-trip's voice;
+    * 2026-09-21 — `update_su`, because a scheda is opened on a unit that
+      already exists far more often than it creates one, and `add_node` on an
+      id that is not there CREATES it (measured in
+      `s3dgraphy.crdt.apply_op_to_section`). Correcting a record and inventing
+      one had to stop being the same operation;
+    * 2026-09-21 — `relate_su`, the intent that was MISSING. Marking the ICCD
+      sheet in `stratigraph-templates` showed that none of the seven let a
+      person say «la 12 copre la 18», which is a thing said all day in a
+      trench — so the sheet's ten relationship boxes had to stay `unknown`
+      there for want of a criterion here;
+    * 2026-09-21 — `validate_field`, because a value a model composed and
+      nobody confirmed must not look like any other value, and confirming it
+      is an act of its own: «I read it and it is right» is not «I changed it».
+    """
     registry = build_registry(FakeNode(), InMemoryAssetStore())
     assert {d.name for d in registry.list()} == {
-        "create_su", "which_project", "attach_photo_to_su", "ingest_photos",
-        "query_kg", "build_model", "open_in_emstudio"}
+        "create_su", "update_su", "relate_su", "validate_field",
+        "which_project", "attach_photo_to_su", "ingest_photos", "query_kg",
+        "build_model", "open_in_emstudio"}
 
 
 # ── 2 · what the node is asked ───────────────────────────────────────────────

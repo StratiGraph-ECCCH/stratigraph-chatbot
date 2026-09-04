@@ -38,6 +38,21 @@ dependencies = [
     # reason from serving one. Declared so a build that drops the extra fails at
     # install rather than at the first thing somebody says in a trench.
     "websockets>=12",
+    # THE SCHEDA'S FORMAT. `app/scheda.py` reads a `stratigraph-templates`
+    # definition, and those are YAML because a definition's COMMENTS are part
+    # of the datum (that repository's SPEC.md §0).
+    #
+    # Declared even though it was already installed, and the reason is the same
+    # one written above for `websockets`: it was in the environment as nobody's
+    # declared dependency (`pip show pyyaml` → `Required-by:` empty), so a build
+    # that resolved differently would have failed at the first scheda somebody
+    # opened in a trench rather than at install.
+    #
+    # NOTE WHAT IS **NOT** HERE: `stratigraph-templates` itself. Its Python is
+    # the authoring engine and the A4 print, and it runs on a server; the module
+    # has to work offline in a browser. So the definition travels as DATA and
+    # this service only reads it — see `app/scheda.py` for the whole argument.
+    "PyYAML>=6",
     # Auth is a hard dependency for the reason StratiGraph Server states: a build that
     # cannot verify a token comes up open, and this one WRITES to a shared graph.
     "PyJWT[crypto]>=2.8",

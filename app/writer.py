@@ -54,9 +54,122 @@ class RoomRefused(RuntimeError):
     """
 
 
+#: The fields a CRDT operation can address, MEASURED rather than assumed:
+#: `s3dgraphy.crdt.apply_op_to_section` refuses anything that is not `name`,
+#: `description`, or a `data.` path —
+#:
+#:     if not name or (name != "name" and name != "description"
+#:                     and not name.startswith("data.")):
+#:         return OpResult(False, f"'{name}' is not an addressable field")
+#:
+#: so a writer that sent `sito` instead of `data.sito` would collect a refusal
+#: per field and report a successful save. The prefixing happens in ONE place
+#: (`addressable`) for that reason.
+_DIRECT_FIELDS = ("name", "description")
+_DATA_PREFIX = "data."
+
+
+def addressable(name: str) -> str:
+    """A field name as an operation must spell it.
+
+    `descrizione` → `data.descrizione`; `description` → `description`. Not a
+    convenience: the CRDT's own refusal list is the authority, and a second
+    spelling of it somewhere else would be a rule that agrees today.
+    """
+    clean = str(name or "").strip()
+    if not clean:
+        raise ValueError("a field with no name cannot be addressed")
+    if clean in _DIRECT_FIELDS or clean.startswith(_DATA_PREFIX):
+        return clean
+    return f"{_DATA_PREFIX}{clean}"
+
+
+class FieldRefused(RuntimeError):
+    """An `update_field` the room would not apply — and which one, and why.
+
+    Separate from `RoomRefused` because the two need different answers: a role
+    that may not write is about the person, a field the room refused is about
+    one value. `outcomes` carries them per field so a form can mark the boxes
+    that did not land instead of showing one red banner over a page.
+    """
+
+    def __init__(self, message: str, outcomes: List[Dict[str, Any]]) -> None:
+        super().__init__(message)
+        self.outcomes = outcomes
+
+
+def _now() -> str:
+    """The instant a field write claims. From s3Dgraphy, like everything else.
+
+    MEASURED, and it is why this function exists at all:
+
+        def op_clock(op):
+            return Clock(ts=(str(op["ts"]) if op.get("ts") else None), …)
+
+    **An operation with no `ts` carries a clock with no timestamp**, and a
+    clock with no timestamp LOSES against any stamped state. The first version
+    of `update` left it out and every single field came back `stale` against a
+    unit created two lines earlier — a save that reported success and wrote
+    nothing. It is the contract's own rule seen from the writing side: if you
+    write a field, stamp it.
+    """
+    from s3dgraphy.editorial import now_iso
+    return now_iso()
+
+
+def _absent(outcomes: List[Dict[str, Any]]) -> bool:
+    """Did the room (or the container) say the node is not here?"""
+    return any(not o["applied"] and "is not here" in str(o.get("reason") or "")
+               for o in outcomes)
+
+
+def _raise_if_absent(node_id: str, outcomes: List[Dict[str, Any]]) -> None:
+    """«node '…' is not here» is not a failure to report quietly.
+
+    It means somebody is correcting a unit that does not exist — a mistyped
+    number, or a form opened against a study it does not belong to — and the
+    honest answer is a refusal, not a save that wrote nothing. Read from the
+    CRDT's own `reason` string rather than pre-checked, so a unit removed
+    between the check and the write is caught too.
+
+    A `stale` or `idempotent` field is NOT this: those are the merge working,
+    and they come back in the outcomes for the form to show.
+    """
+    if _absent(outcomes):
+        raise FieldRefused(
+            f"L'unità «{node_id}» non è in questo grafo: non posso aggiornare "
+            f"una scheda che non esiste. Creala prima.", outcomes)
+
+
 class GraphWriter(Protocol):
     def apply(self, delta: GraphDelta) -> None: ...
+    #: THE SECOND VERB OF THE SAME SEAM, and why it has to exist.
+    #:
+    #: `apply` puts NODES and EDGES somewhere: it is the shape
+    #: `s3dgraphy.contract.core.Delta` can express (`nodes`, `edges`, `author`,
+    #: `process`, `volatile` — measured, there is no room for a field write).
+    #: An UPDATE is not a set of nodes, it is a set of field writes with their
+    #: own clocks, and the difference is not cosmetic: `add_node` on an id that
+    #: is not there CREATES it, while `update_field` refuses with
+    #: «node '…' is not here». That refusal is the whole distinction between
+    #: correcting a unit and inventing one.
+    #:
+    #: So the seam grew a verb rather than the delta growing a field: the
+    #: `Delta` is the SHARED contract's and changing it is another repository's
+    #: decision (reported in tonight's end-of, not taken here), while
+    #: `GraphWriter` is this file's own protocol.
+    #:
+    #: NOT a second road to the graph: both verbs are on this one seam, both are
+    #: implemented by both writers, and nothing else in `app/` opens a socket.
+    def update(self, node_id: str, fields: Dict[str, Any], *,
+               author: Optional[str],
+               process: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]: ...
     def has_node(self, node_id: str) -> bool: ...
+    #: THE READING VERB. Validating a field has to know how the value arrived
+    #: — a validation that did not read the previous authorship would erase
+    #: the memory that a model had proposed it. `has_node` answers «is it
+    #: there»; this answers «what does it say».
+    def node(self, node_id: str) -> Optional[Dict[str, Any]]: ...
     def study_name(self) -> Optional[str]: ...
     def count_units(self) -> int: ...
     def answer(self, question: str) -> str: ...
@@ -131,9 +244,70 @@ class LocalWriter:
                     edges.append(edge)
             self._write(doc)
 
+    def update(self, node_id: str, fields: Dict[str, Any], *,
+               author: Optional[str],
+               process: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Field writes into the node's own container — through the CRDT itself.
+
+        `s3dgraphy.crdt.apply_op_to_section` is called rather than reimplemented,
+        which is the same choice `tools.py` makes when it asks the library to
+        perform an act on a scratch graph and reads what appeared. The clocks,
+        the last-writer-wins per field, the tombstone of an emptied field and the
+        refusal for a node that is not here are the library's — and a local save
+        that merged by hand would diverge from the room on the first conflict,
+        which is the one place the two must agree.
+        """
+        from s3dgraphy.crdt import apply_op_to_section
+
+        outcomes: List[Dict[str, Any]] = []
+        with self._lock:
+            doc = self._read()
+            section = self._section(doc)
+            stamp = _now()
+
+            # THE FIELDS FIRST, AND THE D7 LAST — and the order is the point.
+            #
+            # The first version recorded the act before attempting it, and a
+            # refused update left behind a `dtc_process` node saying «US 21: 1
+            # campi aggiornati» about a unit that does not exist. **A record of
+            # an act that did not happen is worse than no record**: it is a
+            # claim nobody can defend, in the one place built to hold claims
+            # somebody can. Caught by a test that counted the nodes after a
+            # refusal.
+            for name, value in fields.items():
+                op = {"op": "update_field", "node_id": node_id,
+                      "field": addressable(name), "author": author,
+                      "ts": stamp}
+                if value is None:
+                    op["remove"] = True
+                else:
+                    op["value"] = value
+                result = apply_op_to_section(section, op)
+                outcomes.append({"field": addressable(name),
+                                 "applied": bool(result.applied),
+                                 "reason": result.reason})
+
+            if _absent(outcomes):
+                # NOTHING is written: `doc` is a value read from the file and
+                # dropping it on the floor is how a local writer rolls back.
+                _raise_if_absent(node_id, outcomes)
+
+            if process:
+                apply_op_to_section(section, {"op": "add_node",
+                                              "id": process["id"],
+                                              "node": process,
+                                              "author": author, "ts": stamp})
+            self._write(doc)
+        return outcomes
+
     def has_node(self, node_id: str) -> bool:
         section = self._section(self._read())
         return any(n.get("id") == node_id for n in section.get("nodes") or [])
+
+    def node(self, node_id: str) -> Optional[Dict[str, Any]]:
+        section = self._section(self._read())
+        return next((n for n in section.get("nodes") or []
+                     if n.get("id") == node_id), None)
 
     def study_name(self) -> Optional[str]:
         doc = self._read()
@@ -388,8 +562,139 @@ class RoomWriter:
 
     # Reads go to the fallback when there is one: on a field node the local
     # container is the copy that is always there.
+    def update(self, node_id: str, fields: Dict[str, Any], *,
+               author: Optional[str],
+               process: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Field writes into the room — one connection, one ack read per field.
+
+        THE DIFFERENCE FROM `apply`, and it is why this does not reuse
+        `_await_result`: for a creation a refused operation is a failure, and
+        raising is right. For an update a refused field is often the merge
+        WORKING — `stale` means somebody else wrote that box more recently and
+        the room is correct to keep their value; `idempotent` means the value is
+        already what we are sending. Aborting a whole scheda on the first
+        `stale` would throw away eleven good fields because of one.
+
+        So the outcomes are COLLECTED and handed back, and only two things
+        raise: a node that is not there (`_raise_if_absent` — that is an update
+        of something that does not exist, not a merge) and a refusal about the
+        person rather than the value (`denied`, which `_await_outcome` lets
+        through as `RoomRefused`).
+
+        Unreachable falls back to the local container, exactly as `apply` does:
+        offline-first means the network is the optional part.
+        """
+        # ONE stamp for the whole act, not one per field: a scheda saved in one
+        # gesture is one moment, and giving twelve fields twelve timestamps
+        # would invent an order between boxes that nobody filled in sequence.
+        stamp = _now()
+        ops: List[Dict[str, Any]] = []
+        for name, value in fields.items():
+            op: Dict[str, Any] = {"op": "update_field", "node_id": node_id,
+                                  "field": addressable(name),
+                                  "author": author, "ts": stamp}
+            if value is None:
+                op["remove"] = True
+            else:
+                op["value"] = value
+            ops.append(op)
+        if not ops:
+            return []
+        # …and the D7 LAST, for the reason `LocalWriter.update` states at
+        # length: an act that the room refuses must not leave a record saying it
+        # happened. Sent last means never sent at all in that case.
+        if process:
+            ops.append({"op": "add_node", "id": process["id"], "node": process,
+                        "author": author, "ts": stamp})
+
+        try:
+            outcomes = self._send_updates(ops)
+        except RoomRefused as refusal:
+            self.degraded = True
+            self.last_refusal = str(refusal)
+            raise
+        except Exception as exc:                      # unreachable, timeout, TLS
+            self.degraded = True
+            self.last_refusal = f"{type(exc).__name__}: {exc}"
+            if self.fallback is not None:
+                return self.fallback.update(node_id, fields, author=author,
+                                            process=process)
+            raise
+        self.degraded = False
+        self.last_refusal = None
+        _raise_if_absent(node_id, outcomes)
+        return outcomes
+
+    def _send_updates(self, ops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Open, join, send, read each ack WITHOUT raising on a refused field."""
+        from websockets.sync.client import connect
+
+        outcomes: List[Dict[str, Any]] = []
+        with connect(self._ws_url(), open_timeout=self.timeout,
+                     close_timeout=self.timeout, max_size=None) as socket:
+            self._drain_join(socket)
+            for op in ops:
+                if op["op"] == "add_node" and _absent(outcomes):
+                    # the unit is not in the room: the act did not happen, so
+                    # its record does not get sent. The caller raises.
+                    break
+                socket.send(json.dumps({"v": WIRE, "type": "op",
+                                        "payload": op}))
+                payload = self._await_outcome(socket, op)
+                if op["op"] == "update_field":
+                    outcomes.append({"field": op["field"],
+                                     "applied": bool(payload.get("applied")),
+                                     "reason": payload.get("reason")})
+                elif not payload.get("applied"):
+                    # the D7 that records the act. A refused process node means
+                    # the act itself did not get recorded, and an unattributable
+                    # change is the one thing this service does not produce.
+                    raise RoomRefused(
+                        f"the room did not record the act: "
+                        f"{payload.get('reason') or 'no reason given'}")
+        return outcomes
+
+    def _await_outcome(self, socket: Any, op: Dict[str, Any]) -> Dict[str, Any]:
+        """Read until THIS operation is answered, and RETURN the answer.
+
+        `_await_result`'s twin, and deliberately a twin rather than a flag on
+        it: that one's contract is «raise unless it landed» and `apply` depends
+        on exactly that. What is shared is the skipping — the relay fans out
+        other people's operations and presence on the same socket, so the answer
+        is not necessarily the next frame.
+        """
+        deadline = time.monotonic() + self.timeout
+        while time.monotonic() < deadline:
+            message = self._recv(socket)
+            kind = message.get("type")
+            payload = message.get("payload") or {}
+            if kind == "op_result":
+                return payload
+            if kind == "denied":
+                # about the PERSON, not the value: it aborts.
+                raise RoomRefused(payload.get("reason")
+                                  or "the room refused the write")
+            if kind == "error":
+                raise RoomRefused(payload.get("detail") or "the room errored")
+        raise TimeoutError(
+            f"no answer from the room for {op.get('op')} "
+            f"{op.get('node_id') or op.get('id')} within {self.timeout}s")
+
     def has_node(self, node_id: str) -> bool:
         return self.fallback.has_node(node_id) if self.fallback else False
+
+    def node(self, node_id: str) -> Optional[Dict[str, Any]]:
+        """Through the local container, exactly as `has_node` does.
+
+        DECLARED LIMIT, and it is inherited rather than introduced: this client
+        does not hold a snapshot of the room, so what it can read back is what
+        the node's own container has. For a validation that follows a save in
+        the same session that is the same thing; for a field somebody else
+        composed in another session it is not, and the honest consequence is
+        that the validation would find no AI marker and skip the field —
+        reported, not silently guessed.
+        """
+        return self.fallback.node(node_id) if self.fallback else None
 
     def study_name(self) -> Optional[str]:
         return self.fallback.study_name() if self.fallback else self.room_id

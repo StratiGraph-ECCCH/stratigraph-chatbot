@@ -90,6 +90,48 @@ def extract_us(transcript: str) -> Optional[str]:
     return None
 
 
+#: TWO units and the verb between them — «la 12 copre la 18».
+#:
+#: The slot extraction above is deliberately narrow (a unit NUMBER), and this is
+#: the widening the note there anticipated: *«widening it is adding a pattern,
+#: not rewriting a parser»*. It is added because a rapporto stratigrafico was
+#: the one thing a person says all day and this service could not hear — found
+#: by marking the ICCD sheet in `stratigraph-templates`, where the ten
+#: relationship boxes had to stay `unknown` for want of an intent here.
+#:
+#: The verb is looked up against `tools.RELATIONS`, which is the map measured
+#: against the connections datamodel. **The lookup is not done here**: this
+#: returns what was SAID, and the tool decides what it means. A parser that
+#: also decided the edge type would be a second place where a relationship's
+#: meaning lives.
+_RELATION_PATTERN = re.compile(r"(\d{1,5})\s+([^\d]+?)\s*(\d{1,5})")
+
+
+def extract_relation(transcript: str) -> Optional[Dict[str, str]]:
+    """`{us, relation, other}` from a sentence, or None. Never a guess.
+
+    The middle of the sentence is matched against the KNOWN verbs, longest
+    first, so «si appoggia a» wins over «appoggia a» and a phrase that contains
+    no verb we know returns None rather than the first number and a shrug.
+
+    Longest-first matters for the inverses too: «coperta dalla 18» contains
+    «coperta da», and that must win over nothing at all — an inverse recorded
+    as a forward relation would put the arrow the wrong way round, which is the
+    one error in stratigraphy that changes the sequence.
+    """
+    from .tools import RELATIONS
+
+    said = _normalise(transcript)
+    found = _RELATION_PATTERN.search(said)
+    if not found:
+        return None
+    left, middle, right = found.group(1), found.group(2), found.group(3)
+    for verb in sorted(RELATIONS, key=len, reverse=True):
+        if verb in middle:
+            return {"us": left, "relation": verb, "other": right}
+    return None
+
+
 #: The language the rules — and therefore this NODE — actually understand.
 #:
 #: The intent vocabulary is a phrasebook somebody designed on purpose ("crea una
@@ -134,7 +176,16 @@ def rules_parse(transcript: str, registry: ToolRegistry) -> Optional[Intent]:
     _, phrase, descriptor = candidates[0]
 
     slots: Dict[str, Any] = {}
-    if any(s.name == "us" for s in descriptor.input_schema):
+    declared = {s.name for s in descriptor.input_schema}
+    # Dispatched on the slots the descriptor DECLARES, not on the tool's name:
+    # a tool that wants two units and a verb says so in its schema, and the
+    # parser never learns a name. Same shape as the `us` line below it, which
+    # has worked that way since the MVP.
+    if {"other", "relation"} <= declared:
+        pair = extract_relation(transcript)
+        if pair:
+            slots.update(pair)
+    if "us" in declared and "us" not in slots:
         number = extract_us(transcript)
         if number:
             slots["us"] = number
