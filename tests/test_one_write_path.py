@@ -26,6 +26,22 @@ APP = pathlib.Path(__file__).resolve().parent.parent / "app"
 #: avere, invece di scoprirlo dopo.
 ALLOWED = {
     "writer.py": "la STANZA e il contenitore locale — l'unica via al grafo",
+    # 2026-09-26 · IL CANCELLO È SCATTATO, e la conversazione che voleva avere è
+    # questa: `session.py` NON è una seconda via di scrittura. È il socket che
+    # `writer.py` usava già, estratto e **tenuto aperto** invece di essere aperto
+    # e chiuso a ogni consegna.
+    #
+    # Il motivo dell'estrazione è l'invariante di progetto: StratiField SIEDE al
+    # tavolo della stanza, non è un corrispondente che imbuca lettere. Fino a
+    # stanotte `_send_ops` faceva `with connect(...)` — apre, entra, manda,
+    # chiude — e fra una consegna e l'altra nessuno nella stanza sapeva che
+    # esistesse. Il difetto di persistenza del relay è la stessa cosa vista
+    # dall'altro lato: il client che avrebbe dovuto chiedere `request_save` se
+    # n'era già andato.
+    #
+    # Le operazioni CRDT continuano a partire da `writer.py` e da nessun altro
+    # posto — lo tiene il test qui sotto, che guarda i verbi e non i socket.
+    "session.py": "la STANZA, tenuta aperta: il socket di writer.py, seduto",
     "intent.py": "il modello di intento sul nodo (/chat/completions)",
     "handoff.py": "il realm (scambio del codice OIDC) e /v1/auth-config",
     "assets.py": "lo store degli asset del nodo",

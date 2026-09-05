@@ -52,6 +52,14 @@ class FakeRelay:
         self.apply_ops = apply_ops
         self.noise = noise
         self.tokens = []
+        #: QUANTE VOLTE QUALCUNO È ENTRATO. Dal 26 settembre serve a misurare
+        #: la differenza fra un corrispondente e un seduto: due consegne, una
+        #: connessione.
+        self.connections = 0
+        #: i socket aperti adesso, per poterli far cadere da un test — la
+        #: caduta è il caso normale del telefono, non un'eccezione da simulare
+        #: con un mock.
+        self.live = []
         self.port = None
         self._loop = None
         self._thread = None
@@ -84,6 +92,8 @@ class FakeRelay:
             target = getattr(path, "path", "") or ""
             if "token=" in target:
                 self.tokens.append(target.split("token=", 1)[1].split("&")[0])
+            self.connections += 1
+            self.live.append(socket)
             await socket.send(json.dumps({
                 "v": 2, "type": "host_info", "source": "em-server",
                 "payload": {"room": "r", "author": ORCID, "role": "owner",
@@ -104,6 +114,14 @@ class FakeRelay:
                         await socket.send(json.dumps({
                             "v": 2, "type": "presence", "source": "em-server",
                             "payload": {"members": ["someone"]}}))
+                    # SOLO alle operazioni. Rispondere `op_result` anche a
+                    # `client_info` — che è quello che faceva questo finto relay
+                    # fino al 26 settembre — metteva in coda una risposta che
+                    # non era di nessuno, e con una sessione tenuta quella
+                    # sfasava di uno tutte le successive. Il relay vero risponde
+                    # solo agli `op`.
+                    if message.get("type") != "op":
+                        continue
                     await socket.send(json.dumps({
                         "v": 2, "type": "op_result", "source": "em-server",
                         "payload": {"applied": bool(self.apply_ops),
@@ -111,6 +129,9 @@ class FakeRelay:
                                     "op": message.get("payload")}}))
             except Exception:                      # the client closed
                 pass
+            finally:
+                if socket in self.live:
+                    self.live.remove(socket)
 
         async def main():
             async with websockets.serve(handler, "127.0.0.1", 0) as server:
@@ -129,6 +150,35 @@ class FakeRelay:
     @property
     def ops(self):
         return [m["payload"] for m in self.received if m.get("type") == "op"]
+
+    @property
+    def declarations(self):
+        return [m["payload"] for m in self.received
+                if m.get("type") == "client_info"]
+
+    def drop_all(self):
+        """Fa cadere le connessioni aperte, dal thread del test.
+
+        La rete che cade non si simula con un mock: si chiude il socket dal
+        lato del server, che è quello che succede quando un telefono entra in
+        galleria."""
+        import asyncio as _asyncio
+        for socket in list(self.live):
+            _asyncio.run_coroutine_threadsafe(socket.close(), self._loop).result(5)
+
+    def shout(self, how_many):
+        """Manda `how_many` frame di presenza a chi è dentro, senza che nessuno
+        le abbia chieste. Serve a misurare la coda di ricezione: `websockets`
+        17.1 ha `max_queue=16`, e una sessione che non legge si blocca lì."""
+        import asyncio as _asyncio
+
+        async def go():
+            for i in range(how_many):
+                for socket in list(self.live):
+                    await socket.send(json.dumps({
+                        "v": 2, "type": "presence", "source": "em-server",
+                        "payload": {"members": [f"altro-{i}"]}}))
+        _asyncio.run_coroutine_threadsafe(go(), self._loop).result(10)
 
 
 def _writer(relay, **kwargs):

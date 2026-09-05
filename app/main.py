@@ -30,6 +30,8 @@ question anybody asks, and it deserves an answer that is one GET away.
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import pathlib
 
 import base64
@@ -77,7 +79,48 @@ except ImportError as exc:  # pragma: no cover
 # happens» is information, «on the latest version» is not.
 __version__ = "1.6.0.dev1"
 
+log = logging.getLogger("stratigraph.chatbot")
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Sedersi all'avvio, e alzarsi quando il servizio finisce.
+
+    **All'avvio e non alla prima consegna**, ed è tutta la differenza fra un
+    seduto e un corrispondente: se il posto si prendesse alla prima operazione,
+    un assistente aperto e fermo — che è la maggior parte del tempo di un
+    telefono in cantiere — non sarebbe nella stanza, e nessuno lì dentro
+    saprebbe che c'è.
+
+    **Non può impedire l'avvio.** La stanza può essere giù, il token scaduto, il
+    telefono senza campo: sono i casi normali, non guasti di configurazione. Ci
+    si siede alla prima occasione utile (`_seated`), e nel frattempo il servizio
+    lavora sul container locale — che è il ponte già costruito.
+    """
+    sit = getattr(WRITER, "_seated", None)
+    if sit is not None:
+        try:
+            sit()
+            log.info("seduti nella stanza")
+        except Exception as exc:      # noqa: BLE001
+            log.info("non seduti (per ora): %s", exc)
+        # …e si RESTA seduti: il sorvegliante riprende il posto quando cade,
+        # che è quello che succede a ogni riavvio del relay e a ogni buco di
+        # rete. Senza, «seduto» durerebbe fino al primo singhiozzo.
+        seat = getattr(getattr(WRITER, "session", None), "keep_seated", None)
+        if seat is not None:
+            seat()
+    yield
+    leave = getattr(WRITER, "close", None)
+    if leave is not None:
+        try:
+            leave()
+        except Exception:             # noqa: BLE001 — alzarsi non deve fallire
+            pass
+
+
 app = FastAPI(
+    lifespan=_lifespan,
     title="stratigraph-chatbot",
     version=__version__,
     summary="The StratiGraph field assistant: voice → intent → tool → a "

@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol
 
 from .contract import GraphDelta
+from .session import RoomSession, SessionClosed, SessionRefused
 
 #: The wire version this client speaks (ADR-002 / WIRE 2). Stated here rather
 #: than imported: the chatbot does not depend on StratiGraph Server's package, and
@@ -379,6 +380,15 @@ class RoomWriter:
         #: to the node's own container and syncs later. Offline-first means the
         #: network is the optional part.
         self.fallback = fallback
+        #: IL POSTO A SEDERE. Aperto pigramente alla prima consegna e poi
+        #: TENUTO: fino al 26 settembre ogni consegna apriva e chiudeva una
+        #: connessione, e fra una consegna e l'altra questo servizio non era
+        #: nella stanza — nessuno nella stanza sapeva che esistesse.
+        #:
+        #: L'indirizzo è una funzione e non una stringa perché il token scade e
+        #: una sessione che si riapre deve poter chiedere quello aggiornato.
+        self.session = RoomSession(self._ws_url, timeout=timeout,
+                                   saves_itself=False)
         self.degraded = False
         #: WHY the last write did not go through, if it did not. `describe()`
         #: reads it: "degraded" without a reason is a status light with no label.
@@ -522,17 +532,82 @@ class RoomWriter:
         self.last_refusal = None
 
     def _send_ops(self, ops: List[Dict[str, Any]]) -> None:
-        """Open, join, send, read each ack, close."""
-        from websockets.sync.client import connect
+        """Consegna DENTRO la sessione già aperta, e leggi ogni ack.
 
-        with connect(self._ws_url(), open_timeout=self.timeout,
-                     close_timeout=self.timeout,
-                     max_size=None) as socket:
-            self._drain_join(socket)
-            for op in ops:
-                socket.send(json.dumps({"v": WIRE, "type": "op",
-                                        "payload": op}))
-                self._await_result(socket, op)
+        Era: apri, entra, manda, chiudi. Adesso la sessione c'è già — o si apre
+        adesso e resta — e la consegna passa da lì.
+        """
+        self._seated()
+        for op in ops:
+            self.session.send("op", op)
+            self._result_of(op)
+
+    # ── il posto a sedere ───────────────────────────────────────────────────
+
+    def _seated(self) -> None:
+        """Assicura la sessione, riaprendola se è caduta.
+
+        **La caduta è normale, non eccezionale**: in modalità telefono la rete
+        va e viene, e ogni consegna può trovarsi il posto vuoto. Chi chiama non
+        se ne accorge — se non si riesce a rientrare, l'eccezione risale e il
+        chiamante ricade sul container locale, che è il ponte già costruito.
+        """
+        if self.session.seated:
+            return
+        try:
+            host = self.session.open()
+        except SessionRefused as refusal:
+            # UNA PORTA CHIUSA NON È UNA RETE CHE MANCA. `apply` ricade sul
+            # container locale per qualunque eccezione che non sia `RoomRefused`,
+            # e senza questa traduzione un ruolo in sola lettura sarebbe
+            # diventato una scrittura locale che nessuno avrebbe mai potuto
+            # consegnare.
+            raise RoomRefused(str(refusal)) from None
+        host = host
+        # QUELLO CHE IL RELAY DICE ALLA PORTA, tenuto: da stanotte contiene
+        # anche se dei salvataggi si occupa lui (`keeping.host_keeps`).
+        self.host_info = host
+
+    def _result_of(self, op: Dict[str, Any]) -> None:
+        """L'ack di QUESTA operazione, o l'eccezione che dice perché no."""
+        payload = self._outcome_of(op)
+        if payload.get("applied"):
+            return
+        raise RoomRefused(
+            f"the room did not apply {op.get('op')} {op.get('id')}: "
+            f"{payload.get('reason') or 'no reason given'}")
+
+    def _outcome_of(self, op: Dict[str, Any]) -> Dict[str, Any]:
+        def is_ours(message: Dict[str, Any]) -> bool:
+            """L'`op_result` di QUESTA operazione e non di un'altra.
+
+            Il relay rimanda l'operazione dentro la risposta (`payload.op`), e
+            questa è la ragione per cui quel campo vale la pena: in una sessione
+            tenuta le risposte possono accumularsi, e contare invece di
+            riconoscere produce uno sfasamento di uno — misurato."""
+            answered = (message.get("payload") or {}).get("op")
+            if not isinstance(answered, dict):
+                # un relay che non rimanda l'operazione: si torna a contare, che
+                # è quello che si faceva prima e che qui è il ripiego onesto
+                return True
+            return (answered.get("op") == op.get("op")
+                    and answered.get("id") == op.get("id")
+                    and answered.get("node_id") == op.get("node_id")
+                    and answered.get("field") == op.get("field"))
+
+        message = self.session.await_answer("op_result", matches=is_ours)
+        payload = message.get("payload") or {}
+        kind = message.get("type")
+        if kind == "denied":
+            raise RoomRefused(payload.get("reason")
+                              or "the room refused the write")
+        if kind == "error":
+            raise RoomRefused(payload.get("detail") or "the room errored")
+        return payload
+
+    def close(self) -> None:
+        """Lascia il tavolo. Esplicito, perché il ciclo di vita lo è."""
+        self.session.close()
 
     def _drain_join(self, socket: Any) -> Optional[Dict[str, Any]]:
         """Read the three join frames, BELIEVE the first, and KEEP the snapshot.
@@ -670,32 +745,27 @@ class RoomWriter:
         return outcomes
 
     def _send_updates(self, ops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Open, join, send, read each ack WITHOUT raising on a refused field."""
-        from websockets.sync.client import connect
-
+        """Come sopra, ma un campo rifiutato NON solleva: torna nell'esito."""
+        self._seated()
         outcomes: List[Dict[str, Any]] = []
-        with connect(self._ws_url(), open_timeout=self.timeout,
-                     close_timeout=self.timeout, max_size=None) as socket:
-            self._drain_join(socket)
-            for op in ops:
-                if op["op"] == "add_node" and _absent(outcomes):
-                    # the unit is not in the room: the act did not happen, so
-                    # its record does not get sent. The caller raises.
-                    break
-                socket.send(json.dumps({"v": WIRE, "type": "op",
-                                        "payload": op}))
-                payload = self._await_outcome(socket, op)
-                if op["op"] == "update_field":
-                    outcomes.append({"field": op["field"],
-                                     "applied": bool(payload.get("applied")),
-                                     "reason": payload.get("reason")})
-                elif not payload.get("applied"):
-                    # the D7 that records the act. A refused process node means
-                    # the act itself did not get recorded, and an unattributable
-                    # change is the one thing this service does not produce.
-                    raise RoomRefused(
-                        f"the room did not record the act: "
-                        f"{payload.get('reason') or 'no reason given'}")
+        for op in ops:
+            if op["op"] == "add_node" and _absent(outcomes):
+                # the unit is not in the room: the act did not happen, so
+                # its record does not get sent. The caller raises.
+                break
+            self.session.send("op", op)
+            payload = self._outcome_of(op)
+            if op["op"] == "update_field":
+                outcomes.append({"field": op["field"],
+                                 "applied": bool(payload.get("applied")),
+                                 "reason": payload.get("reason")})
+            elif not payload.get("applied"):
+                # the D7 that records the act. A refused process node means
+                # the act itself did not get recorded, and an unattributable
+                # change is the one thing this service does not produce.
+                raise RoomRefused(
+                    f"the room did not record the act: "
+                    f"{payload.get('reason') or 'no reason given'}")
         return outcomes
 
     def _await_outcome(self, socket: Any, op: Dict[str, Any]) -> Dict[str, Any]:
@@ -729,20 +799,23 @@ class RoomWriter:
         return self.node(node_id) is not None
 
     def _snapshot_node(self, node_id: str) -> Optional[Dict[str, Any]]:
-        """One node, read from the room's own document.
+        """Un nodo, letto dal documento della stanza.
 
-        Opens a connection, reads the join — which is where the snapshot
-        arrives — and closes. One socket per read is the same posture the
+        **Questa docstring diceva il contrario fino al 26 settembre**, e vale la
+        pena tenerne la frase: «one socket per read is the same posture the
         writes take: this assistant is a CORRESPONDENT, it does not keep a seat
         in the room, and holding a socket open to answer a question later would
-        put a phone in a pocket into the roster.
-        """
-        from websockets.sync.client import connect
+        put a phone in a pocket into the roster».
 
-        with connect(self._ws_url(), open_timeout=self.timeout,
-                     close_timeout=self.timeout, max_size=None) as socket:
-            snapshot = self._drain_join(socket)
-        doc = (snapshot or {}).get("doc") or {}
+        Era coerente e sbagliata. Un telefono in tasca **deve** stare nel
+        roster: è quello che rende sensata la parola «stanza», ed è l'invariante
+        di progetto. Adesso la sessione c'è, e la domanda si fa da dentro:
+        `request_snapshot` invece di una connessione nuova.
+        """
+        self._seated()
+        self.session.send("request_snapshot", {})
+        answer = self.session.await_answer("snapshot")
+        doc = ((answer.get("payload") or {}).get("doc")) or {}
         for section in (doc.get("graphs") or {}).values():
             for node in section.get("nodes") or []:
                 if node.get("id") == node_id:
