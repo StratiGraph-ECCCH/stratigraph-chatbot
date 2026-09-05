@@ -29,14 +29,18 @@ the tools (which asked s3Dgraphy); this puts it somewhere and reads it back.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol
 
+from .bridge import Bridge, bridge_for
 from .contract import GraphDelta
 from .session import RoomSession, SessionClosed, SessionRefused
+
+log = logging.getLogger("stratigraph.writer")
 
 #: The wire version this client speaks (ADR-002 / WIRE 2). Stated here rather
 #: than imported: the chatbot does not depend on StratiGraph Server's package, and
@@ -371,6 +375,7 @@ class RoomWriter:
 
     def __init__(self, base_url: str, room_id: str, token: str, *,
                  fallback: Optional[GraphWriter] = None,
+                 bridge: Optional[Bridge] = None,
                  timeout: float = 10.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.room_id = room_id
@@ -389,6 +394,17 @@ class RoomWriter:
         #: una sessione che si riapre deve poter chiedere quello aggiornato.
         self.session = RoomSession(self._ws_url, timeout=timeout,
                                    saves_itself=False)
+        #: IL PONTE. Quello che si scrive mentre la stanza non c'è aspetta qui e
+        #: rientra alla prima sessione utile. Senza, il lavoro si posava nel
+        #: container locale e da lì non partiva più — un esito che assomiglia a
+        #: un successo, che è il peggiore dei tre.
+        #:
+        #: **Passato, non dedotto qui.** La prima versione se lo costruiva da
+        #: sé quando c'era un `fallback`, e allora `bridge=None` non poteva più
+        #: voler dire «senza ponte» — cioè il caso che serve a misurare il
+        #: difetto non era esprimibile. Lo monta `writer_from_env`, dove si
+        #: legge la configurazione: è lì che si decide cosa questo nodo ha.
+        self.bridge = bridge
         self.degraded = False
         #: WHY the last write did not go through, if it did not. `describe()`
         #: reads it: "degraded" without a reason is a status light with no label.
@@ -525,6 +541,10 @@ class RoomWriter:
         except Exception as exc:                      # unreachable, timeout, TLS
             self.degraded = True
             self.last_refusal = f"{type(exc).__name__}: {exc}"
+            # IL PONTE PRIMA DEL RIPIEGO, e l'ordine conta: se mettere in coda
+            # fallisce si vede subito, mentre un container locale scritto e una
+            # coda vuota è esattamente il buco di ieri.
+            self._to_the_bridge(ops, why=self.last_refusal)
             if self.fallback is not None:
                 self.fallback.apply(delta)
             return
@@ -549,8 +569,12 @@ class RoomWriter:
 
         **La caduta è normale, non eccezionale**: in modalità telefono la rete
         va e viene, e ogni consegna può trovarsi il posto vuoto. Chi chiama non
-        se ne accorge — se non si riesce a rientrare, l'eccezione risale e il
-        chiamante ricade sul container locale, che è il ponte già costruito.
+        se ne accorge — se non si riesce a rientrare, l'eccezione risale, il
+        lavoro va sul ponte e il container locale lo tiene a portata di mano.
+
+        **E il rientro attraversa il ponte prima di ogni cosa nuova.** Quella
+        riga è il difetto di ieri chiuso: da ieri c'era un posto a sedere e sotto
+        non c'era niente.
         """
         if self.session.seated:
             return
@@ -563,10 +587,52 @@ class RoomWriter:
             # diventato una scrittura locale che nessuno avrebbe mai potuto
             # consegnare.
             raise RoomRefused(str(refusal)) from None
-        host = host
-        # QUELLO CHE IL RELAY DICE ALLA PORTA, tenuto: da stanotte contiene
-        # anche se dei salvataggi si occupa lui (`keeping.host_keeps`).
+        # QUELLO CHE IL RELAY DICE ALLA PORTA, tenuto: da ieri contiene anche
+        # se dei salvataggi si occupa lui (`keeping.host_keeps`).
         self.host_info = host
+        # …e SUBITO il ponte, prima che il chiamante mandi la sua roba nuova.
+        # Un fallimento qui non fa fallire la consegna in corso: la coda resta
+        # dov'è, `bridge.last_refusal` dice perché, e si riprova al prossimo
+        # rientro. Bloccare una scheda nuova per una vecchia in coda sarebbe
+        # scambiare un ritardo per una perdita.
+        try:
+            self._crossed = self._cross_the_bridge()
+        except Exception as exc:          # noqa: BLE001
+            log.warning("il ponte non si è attraversato: %s", exc)
+
+    def _to_the_bridge(self, ops: List[Dict[str, Any]], *, why: str) -> None:
+        """Mettere in coda non deve poter far fallire una consegna.
+
+        Se il ponte stesso non scrive — disco pieno, permessi — la cosa si
+        registra e si continua: il container locale resta la seconda rete, e un
+        `except` qui è meglio di una scheda che esplode in mano a chi scava.
+        """
+        if self.bridge is None:
+            return
+        try:
+            self.bridge.keep(ops, why=why)
+        except Exception as exc:          # noqa: BLE001
+            log.warning("il ponte non ha preso %d operazioni: %s", len(ops), exc)
+
+    def _cross_the_bridge(self) -> Optional[Dict[str, Any]]:
+        """Consegna quello che aspettava, **prima** di qualunque cosa nuova.
+
+        Prima, perché l'ordine è la sola cosa che il CRDT non può ricostruire da
+        solo: una correzione di ieri consegnata dopo quella di oggi perderebbe
+        contro di essa, e sarebbe la risposta giusta a una domanda posta male.
+
+        Chiamata da `_seated()` appena la sessione si apre — cioè al rientro, che
+        è l'unico momento in cui ha senso.
+        """
+        if self.bridge is None or not self.bridge.pending():
+            return None
+
+        def manda(op: Dict[str, Any]):
+            self.session.send("op", op)
+            esito = self._outcome_of(op)
+            return bool(esito.get("applied")), str(esito.get("reason") or "")
+
+        return self.bridge.deliver(manda)
 
     def _result_of(self, op: Dict[str, Any]) -> None:
         """L'ack di QUESTA operazione, o l'eccezione che dice perché no."""
@@ -735,6 +801,7 @@ class RoomWriter:
         except Exception as exc:                      # unreachable, timeout, TLS
             self.degraded = True
             self.last_refusal = f"{type(exc).__name__}: {exc}"
+            self._to_the_bridge(ops, why=self.last_refusal)
             if self.fallback is not None:
                 return self.fallback.update(node_id, fields, author=author,
                                             process=process)
@@ -888,7 +955,8 @@ def writer_from_env(environ: Optional[Dict[str, str]] = None) -> GraphWriter:
                 "a handoff link is configured but no token: run the assistant's "
                 "sign-in (it follows the link and gets one), or set "
                 "EM_CHATBOT_TOKEN for a headless node.")
-        return RoomWriter(where["server"], where["room"], token, fallback=local)
+        return RoomWriter(where["server"], where["room"], token, fallback=local,
+                          bridge=bridge_for(local.path))
 
     base = (env.get("EM_SERVER_URL") or "").strip()
     room = (env.get("EM_CHATBOT_ROOM") or "").strip()
@@ -899,7 +967,11 @@ def writer_from_env(environ: Optional[Dict[str, str]] = None) -> GraphWriter:
                 "a room is configured but no token: the assistant writes as a "
                 "verified person or it does not write. Set EM_CHATBOT_TOKEN, "
                 "or unset EM_SERVER_URL to work on the local container.")
-        return RoomWriter(base, room, token, fallback=local)
+        # IL PONTE ACCANTO AL CONTAINER: le due cose vivono la stessa vita, e
+        # un nodo di cui si salva il volume si porta dietro sia la copia sia
+        # quello che deve ancora partire.
+        return RoomWriter(base, room, token, fallback=local,
+                          bridge=bridge_for(local.path))
     return local
 
 
@@ -912,7 +984,22 @@ def describe(writer: Any) -> str:
         if writer.degraded:
             why = f": {writer.last_refusal}" if writer.last_refusal else ""
             state = f" (degraded, writing locally{why})"
-        return f"room {writer.room_id} at {writer.base_url}{state}"
+        # IL PONTE VA DETTO, e non solo quando è vuoto: una coda che non si
+        # svuota è un lavoro che non è ancora arrivato a nessuno, e finché
+        # nessuno la nomina somiglia a un servizio che funziona. Se non c'è
+        # affatto — un `RoomWriter` costruito a mano, senza container locale —
+        # lo dice anche quello, perché «nessun ponte» è una configurazione e non
+        # un dettaglio.
+        if writer.bridge is None:
+            ponte = " · no bridge (a dropped write is lost)"
+        else:
+            in_attesa = len(writer.bridge)
+            ponte = ""
+            if in_attesa:
+                perche = writer.bridge.last_refusal
+                ponte = (f" · bridge: {in_attesa} waiting"
+                         + (f", stuck on {perche}" if perche else ""))
+        return f"room {writer.room_id} at {writer.base_url}{state}{ponte}"
     if isinstance(writer, LocalWriter):
         return f"local container ({writer.path})"
     return type(writer).__name__
