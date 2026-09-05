@@ -336,8 +336,14 @@ def make_update_su(graph_writer) -> ToolDescriptor:
 
     return ToolDescriptor(
         name="update_su",
-        intents=["aggiorna la scheda", "correggi la us", "modifica la us",
-                 "aggiorna la us", "correggi la scheda"],
+        # LE FRASI SONO ANCHE QUELLE DEI CAMPI, prese dal vocabolario: la lista
+        # È la mappa, per la stessa ragione per cui lo è in `relate_su` — due
+        # elenchi scritti a mano divergono, e l'ho già pagato una volta con le
+        # forme al femminile che la mappa conosceva e gli intenti no.
+        intents=(["aggiorna la scheda", "correggi la us", "modifica la us",
+                  "aggiorna la us", "correggi la scheda"]
+                 + [phrase for phrases in SPOKEN_FIELDS.values()
+                    for phrase in phrases]),
         input_schema=[
             Slot("us", "string", True, "il numero dell'unità da aggiornare"),
             Slot("fields", "id", True,
@@ -352,6 +358,50 @@ def make_update_su(graph_writer) -> ToolDescriptor:
         ],
         description="Aggiorna i campi di un'unità stratigrafica che esiste già.",
         service="s3dgraphy", handler=handler)
+
+
+#: LE PAROLE CHE MANCAVANO — un campo detto a voce, e il campo che ne esce.
+#:
+#: ── LA SCOPERTA, e quanto era larga ────────────────────────────────────────
+#:
+#: Il 21 settembre si è visto che nessuno dei sette intenti permetteva di dire un
+#: rapporto stratigrafico, ed è nato `relate_su`. **La scoperta era più larga**:
+#: non c'era un modo di dire nemmeno `definizione` — che è **obbligatoria** — né
+#: le quote, né le misure.
+#:
+#: Conseguenza misurata sulla US ICCD: i campi da trincea erano **8 su 59**. Una
+#: scheda da trincea con otto caselle non è una scheda semplificata, è una scheda
+#: quasi vuota. **Il collo di bottiglia non è il formato, sono le parole.**
+#:
+#: ── PERCHÉ NON UN TOOL NUOVO ───────────────────────────────────────────────
+#:
+#: `update_su` scrive già qualunque campo. Quello che mancava non era un verbo:
+#: era il VOCABOLARIO che porta una frase a un campo. Un nono tool avrebbe
+#: aggiunto una seconda via di scrittura per fare la stessa cosa.
+#:
+#: ── E IN CHE LINGUA ────────────────────────────────────────────────────────
+#:
+#: In quella che il nodo dichiara (`intent.COMMAND_LANGUAGE`, oggi `it`). Che
+#: alcuni di questi nomi coincidano con gli id di campo della US ICCD non è
+#: perché questo servizio abbia imparato l'ICCD: è perché sono le parole
+#: italiane per le stesse cose. Un nodo che serve schede spagnole vorrà il suo
+#: frasario, ed è una cosa del NODO — il che è già scritto in `intent.py`.
+#: Ogni voce è una lista di FRASI, e il valore è ciò che le segue. Le frasi si
+#: provano dalla più lunga, così «la definizione è» batte «definizione» e il
+#: valore non comincia con « è ».
+#:
+#: L'attacco `(?:d\w+\s+(?:la\s+)?)?(?:us\s*\d+\s*)?` in mezzo è ciò che
+#: regge «il colore DELLA US 12 è bruno»: fra il nome del campo e il valore una
+#: persona infila il riferimento all'unità, e senza quel pezzo il valore
+#: diventava «della us 12 è bruno».
+SPOKEN_FIELDS: Dict[str, Tuple[str, ...]] = {
+    "definizione":  ("la definizione è", "definizione", "è un", "è uno",
+                     "è una"),
+    "quote":        ("la quota è", "quota", "quote"),
+    "misure":       ("le misure sono", "la misura è", "misure", "misura"),
+    "colore":       ("il colore è", "colore"),
+    "consistenza":  ("la consistenza è", "consistenza"),
+}
 
 
 # ── 1ter · relate_su — L'INTENTO CHE MANCAVA ────────────────────────────────

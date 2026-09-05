@@ -94,6 +94,20 @@ class Scheda:
         identity = template.get("identity") or {}
         self.human_key: List[str] = list(
             ((identity.get("human_key") or {}).get("fields")) or [])
+        #: WHICH of those fields IS the unit — `identity.human_key.unit_field`,
+        #: added to SPEC §1.2 on 2026-09-24. It is READ and passed on, not
+        #: resolved here: this module does not interpret, and the rule for what
+        #: to do when it is absent belongs to the consumer that has to draw a
+        #: box (`keyField` in `web/scheda.js`).
+        #:
+        #: WHY IT HAD TO TRAVEL. Until tonight it did not, and the module took
+        #: the LAST field of the key. Measured against this node, on the
+        #: Hungarian sheet: `human_key = [retegszam, lelohely]`, declared
+        #: designator `retegszam` — the FIRST — and the browser chose
+        #: `lelohely`, the place name. A scheda filed under «Aquincum» instead
+        #: of under the layer number, and nothing anywhere would have said so.
+        self.unit_field: str = str(
+            ((identity.get("human_key") or {}).get("unit_field")) or "")
         self.paragraphs: List[Dict[str, Any]] = list(
             template.get("paragraphs") or [])
         if not self.fields:
@@ -177,6 +191,7 @@ class Scheda:
                 for p in self.paragraphs],
             "fields": [self._field_for_browser(f, lang) for f in self.fields],
             "human_key": list(self.human_key),
+            "unit_field": self.unit_field,
             "counts": self.counts(),
         }
 

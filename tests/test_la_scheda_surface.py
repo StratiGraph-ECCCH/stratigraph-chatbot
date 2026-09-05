@@ -309,9 +309,17 @@ def test_that_the_comment_stripper_actually_strips():
 # ── 5 · il sottoinsieme da trincea, sul dato vero ──────────────────────────
 
 @have_templates
-def test_the_phone_subset_of_the_real_sheet_is_eight_not_fiftynine(monkeypatch):
-    """E un campo SENZA marcatore non ci finisce: il default non promette
-    nulla. Provato sull'effetto — si conta cosa torna, non si legge una lista."""
+def test_the_phone_subset_of_the_real_sheet_is_twentyfive_not_fiftynine(
+        monkeypatch):
+    """E un campo SENZA marcatore non ci finisce: il default non promette nulla.
+    Provato sull'effetto — si conta cosa torna, non si legge una lista.
+
+    Era 8 su 59 il 2026-09-23, ed era una scheda quasi vuota. Sono 25 da quando
+    il field assistant sa sentirsi dire `definizione`, le quote, le misure, il
+    colore e la consistenza, e da quando le dodici caselle dei rapporti sono
+    state marcate nella definizione — `relate_su` le copriva dal 21 settembre e
+    nessuno era tornato a chiudere il cerchio.
+    """
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("STRATIGRAPH_SCHEDE_DIR", str(TEMPLATES))
@@ -320,12 +328,17 @@ def test_the_phone_subset_of_the_real_sheet_is_eight_not_fiftynine(monkeypatch):
     doc = TestClient(app).get("/v1/schede/iccd-us-2021?lang=it").json()
     trench = [f for f in doc["fields"] if f["recorded_in"] == "trench"]
     assert len(doc["fields"]) == 59
-    assert len(trench) == 8
+    assert len(trench) == 25
 
     senza = [f for f in doc["fields"] if f["recorded_in"] == "unknown"]
-    assert len(senza) == 48
+    assert len(senza) == 31
     assert not [f for f in senza if f in trench], (
         "un campo senza marcatore è finito fra quelli da trincea")
-    # …e il caso che conta: DEFINIZIONE è obbligatoria e senza marcatore
+
+    # …e il caso che il 2026-09-23 rendeva vivo — un obbligatorio senza
+    # marcatore — NON C'È PIÙ: `definizione` è da trincea, quindi una scheda
+    # compilata sullo scavo adesso chiude.
     definizione = next(f for f in doc["fields"] if f["id"] == "definizione")
-    assert definizione["required"] and definizione["recorded_in"] == "unknown"
+    assert definizione["required"] and definizione["recorded_in"] == "trench"
+    assert not [f for f in doc["fields"]
+                if f["required"] and f["recorded_in"] == "unknown"]

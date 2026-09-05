@@ -132,6 +132,78 @@ def extract_relation(transcript: str) -> Optional[Dict[str, str]]:
     return None
 
 
+#: UN CAMPO DETTO A VOCE — «la definizione è strato di crollo».
+#:
+#: La terza estensione dell'estrazione, dopo il numero di unità e la coppia di un
+#: rapporto, e l'ultima che il commento in cima prevedeva: *«widening it is
+#: adding a pattern, not rewriting a parser»*.
+#:
+#: Il VALORE è ciò che segue la frase, verbatim: non si normalizza, non si
+#: incolonna in un vocabolario, non si corregge. Una parola detta in trincea è
+#: quella che la persona ha detto — e se un giorno passerà da un modello, sarà
+#: quel modello a doverlo dichiarare (`authored_by`), non questo parser a
+#: deciderlo di nascosto.
+#: IL VALORE SI PRENDE DAL TRASCRITTO GREZZO, non da quello normalizzato.
+#:
+#: `_normalise` toglie la punteggiatura — serve a far combaciare le frasi — e su
+#: un valore la distrugge: «quota 145,30» diventava «145 30» e «2 per 1,5 metri»
+#: diventava «2 per 1 5 metri». Su una quota e su una misura la virgola È il
+#: dato, e questi sono precisamente i due campi che questa serata aggiunge.
+#:
+#: Quindi le frasi si cercano con una regex sul testo COME È STATO DETTO, e il
+#: valore è la coda, verbatim.
+_SPOKEN_JOIN = r"(?:\s+d\w+)?(?:\s+(?:la|il|lo))?(?:\s+u\.?\s*s\.?\s*\d{1,5})?(?:\s+(?:è|e|sono|:))?"
+
+
+def _spoken_patterns():
+    """Le frasi del vocabolario, compilate. Costruite dalla mappa e non scritte
+    a mano: due elenchi divergono, ed è già successo."""
+    from .tools import SPOKEN_FIELDS
+
+    out = []
+    for field, phrases in SPOKEN_FIELDS.items():
+        for phrase in sorted(phrases, key=len, reverse=True):
+            words = r"\s+".join(re.escape(w) for w in phrase.split())
+            out.append((len(phrase), field, re.compile(
+                words + _SPOKEN_JOIN + r"\s+(?P<value>\S.*?)\s*$", re.I)))
+    out.sort(key=lambda item: -item[0])
+    return out
+
+
+#: Le parole che UNISCONO il nome del campo al suo valore. Da sole non sono un
+#: valore, e la prima versione le prendeva per tale.
+_CONNECTORS = frozenset({"e", "è", "sono", "la", "il", "lo", "di", "del",
+                         "della", "dello"})
+
+_SPOKEN = None
+
+
+def extract_spoken_field(transcript: str) -> Optional[Dict[str, str]]:
+    """`{field, value}` da una frase, o None. Mai un'invenzione.
+
+    Le frasi si provano dalla PIÙ LUNGA: «la definizione è» deve battere
+    «definizione». E una frase riconosciuta senza niente dopo torna None —
+    «definizione» detto da solo è una domanda, non una scrittura.
+    """
+    global _SPOKEN
+    if _SPOKEN is None:
+        _SPOKEN = _spoken_patterns()
+    said = (transcript or "").strip()
+    if not said:
+        return None
+    for _length, field, pattern in _SPOKEN:
+        found = pattern.search(said)
+        if found:
+            value = found.group("value").strip(" .,;:")
+            # UNA CONGIUNZIONE NON È UN VALORE. «la quota è», detto e basta,
+            # faceva combaciare «quota» e prendeva «è» come valore — scriveva
+            # `data.quote = "è"` nel grafo di qualcuno. Una frase riconosciuta
+            # senza niente dopo è una domanda, non una scrittura.
+            if value and _normalise(value) not in _CONNECTORS:
+                return {"field": field, "value": value}
+    return None
+
+
 #: The language the rules — and therefore this NODE — actually understand.
 #:
 #: The intent vocabulary is a phrasebook somebody designed on purpose ("crea una
@@ -185,6 +257,12 @@ def rules_parse(transcript: str, registry: ToolRegistry) -> Optional[Intent]:
         pair = extract_relation(transcript)
         if pair:
             slots.update(pair)
+    # Un campo detto a voce riempie lo slot `fields`, che è quello che
+    # `update_su` prende — nessun tool nuovo per una cosa che un tool fa già.
+    if "fields" in declared and "fields" not in slots:
+        spoken = extract_spoken_field(transcript)
+        if spoken:
+            slots["fields"] = {spoken["field"]: spoken["value"]}
     if "us" in declared and "us" not in slots:
         number = extract_us(transcript)
         if number:

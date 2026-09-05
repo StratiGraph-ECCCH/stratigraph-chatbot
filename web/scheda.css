@@ -160,6 +160,11 @@
 }
 .sheet .risky, .box .validate { white-space: nowrap; }
 .thumbbar button { margin-bottom: 0; text-align: center; box-shadow: none; }
+/* ☰ è un'icona, non un quinto della barra. E quando nessuna scheda è a schermo
+   resta DA SOLA — è la maniglia della colonna, che deve esserci sempre (vedi
+   `thumbbarPlan`): senza questa riga si allargava a tutta la barra, cioè un
+   bersaglio da 1558px per un carattere, misurato. */
+.thumbbar #tb-nav { flex: none; width: auto; min-width: 56px; }
 .sidenav .navitem { margin-bottom: 0; box-shadow: none; border-radius: 0; }
 
 /* ── la scheda ───────────────────────────────────────────────────────────── */
@@ -388,7 +393,12 @@
   background: var(--sg-accent-quiet);
   border-color: var(--sg-accent-quiet);
   border-left: 4px solid var(--sg-accent);
-  color: var(--sg-off-white);
+  /* Dalla proprietà dichiarata in cima a `shell.css`, non da un token: «ink
+     sopra un riempimento d'accento» è un ruolo che il tema NON ha, e passare
+     tutti gli usi dallo stesso posto è ciò che rende quel debito visibile
+     invece che sparso. Qui il riempimento è `--sg-accent-quiet`, dove il
+     bianco misura 5.92 — AA piena, non solo per il testo grande. */
+  color: var(--sf-accent-ink);
   font-weight: var(--sg-weight-subtitle);
 }
 .thumbbar .step {
@@ -412,6 +422,70 @@
   cursor: pointer;
 }
 .sheet .risky:hover { color: var(--sg-warn); border-color: var(--sg-warn); }
+
+/* Il piede della scheda: dove si salva quando la barra dei pollici non c'è.
+   Separato dal contenuto da una riga, e il bottone NON a tutta larghezza —
+   quello è il gesto di un pollice, qui c'è un cursore. */
+.sheet .sheetfoot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--sg-space-5);
+  padding-top: var(--sg-space-4);
+  border-top: 1px solid var(--sg-line);
+}
+/* `--sg-accent-quiet` e non `--sg-accent`: sopra il terracotta il bianco misura
+   5.92 e regge qualunque testo, mentre sopra l'arancio bruciato sta a 3.53 e
+   regge solo il testo grande. È la stessa scelta del «Salva» del telefono, e la
+   ragione sta in cima a `shell.css`. */
+.sheet .sheetfoot button.save {
+  width: auto;
+  margin: 0;
+  padding: 14px var(--sg-space-5);
+  background: var(--sg-accent-quiet);
+  border-color: var(--sg-accent-quiet);
+  color: var(--sf-accent-ink);
+}
+
+/* ── il dettato sulle soglie grandi: una colonna, non una fascia ─────────── */
+
+/* I bersagli di `shell.css` sono misurati per un pollice col guanto — 18px di
+   padding, larghezza piena — e sono nati dentro un `main` con `max-width:
+   640px`. Quel tetto è caduto QUI, quando la scheda ha avuto bisogno di due
+   facciate affiancate: `main.work` ha `max-width: none`, e il pannello del
+   dettato se l'è tolto insieme alla scheda senza che nessuno lo chiedesse.
+
+   MISURATO nel browser di E.D. il 2026-09-24 — finestra 1574px, modo scrivania:
+   #rec 1302×67, #typed 1302×59, #send 1302×63. Un bottone largo 1302px non è un
+   bersaglio più facile: è lo stesso bersaglio con dentro un metro di vuoto. E
+   una riga di conversazione lunga 1302px non si legge: al corpo del testo (16px)
+   ci stavano **165 caratteri**, e la misura della lettura sta fra i 60 e i 75.
+   A 34rem ce ne stanno **69** — misurati nello stesso browser dopo, con la
+   larghezza media del carattere di questo tema (7.91px a 16px), non stimati.
+
+   NON si rimpiccioliscono i bersagli. 19px/600 su `--sg-accent` è ciò che tiene
+   il contrasto a 3.53 sopra la soglia del testo grande (il conto è in cima a
+   `shell.css`), e il tablet è un attrezzo da cantiere quanto il telefono: chi
+   lo tiene ha i guanti anche a 1024px. Si restringe la COLONNA.
+
+   `--sf-thread` è nostra e non del tema, come dice il prefisso — ma è una
+   LUNGHEZZA: il divieto di letterali di questo file riguarda i colori, che sono
+   ruoli, e una misura tipografica non è un ruolo che il WP01 possa avere. */
+#surface[data-sg-mode="tablet"],
+#surface[data-sg-mode="desktop"] { --sf-thread: 34rem; }
+
+#surface[data-sg-mode="tablet"] #work,
+#surface[data-sg-mode="tablet"] #gate,
+#surface[data-sg-mode="tablet"] .queue,
+#surface[data-sg-mode="desktop"] #work,
+#surface[data-sg-mode="desktop"] #gate,
+#surface[data-sg-mode="desktop"] .queue { max-width: var(--sf-thread); }
+
+/* La carta del nodo resta più stretta della colonna, com'era: 86% di 34rem, non
+   86% della finestra. */
+#surface[data-sg-mode="tablet"] .answer,
+#surface[data-sg-mode="desktop"] .answer {
+  max-width: min(86%, var(--sf-thread));
+}
 
 /* ── il modo: TABLET — una facciata intera ───────────────────────────────── */
 

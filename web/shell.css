@@ -1,3 +1,52 @@
+/* ══ L'UNICO COLORE LETTERALE DI QUESTA APPLICAZIONE, e sta qui ═══════════════
+ *
+ * `--sf-accent-ink` è l'inchiostro che va SOPRA un riempimento d'accento.
+ *
+ * **IL PREFISSO È `--sf-` E NON `--sg-`, di proposito**: `--sg-*` sono i ruoli
+ * del tema (`brand/stratigraph-theme.css`), che è una copia propagata da
+ * `sync-brand.sh` la cui fonte di record sta nel WP01 — verificato oggi:
+ * byte-identica. Non è nostro e non si tocca. Questo è di StratiField, ed è
+ * scritto perché si veda che è debito nostro.
+ *
+ * ── PERCHÉ SERVE: È UN RUOLO CHE AL TEMA MANCA ──────────────────────────────
+ *
+ * Il tema ha `--sg-info-ink` e `--sg-ok-ink` — l'inchiostro leggibile sopra
+ * quelle famiglie — e **non ha `--sg-accent-ink`**. Non è una dimenticanza
+ * banale: il tema stesso spiega che «i tre accenti digitali sono RIEMPIMENTI,
+ * mai inchiostro di testo», e per l'inchiostro SOPRA un riempimento dice solo
+ * «on a filled control the ink is white».
+ *
+ * Quel bianco non è esprimibile con un token: non esiste. Quindi o sei
+ * letterali sparsi, o uno dichiarato. Uno dichiarato è un debito che si vede.
+ *
+ * ── IL CALCOLO, che decide dove si può e dove no ────────────────────────────
+ *
+ *     inchiostro      riempimento                  rapporto   verdetto
+ *     ───────────────────────────────────────────────────────────────────────
+ *     #FFFFFF         --sg-accent (burnt orange)     3.53     solo AA-large
+ *     off-white       --sg-accent                    2.98     insufficiente
+ *     deep-charcoal   --sg-accent                    3.89     solo AA-large
+ *     #FFFFFF         --sg-accent-quiet (terracotta) 5.92     AA
+ *     off-white       --sg-accent-quiet              5.00     AA
+ *
+ * Sopra `--sg-accent` **nessuna coppia arriva a 4.5**, quindi una parola può
+ * starci solo se è «large text» (>= 14pt bold): `button.primary` è 19px/600 e
+ * ci sta, e **rimpicciolire quella scritta rompe il contrasto**. Sopra
+ * `--sg-accent-quiet` si arriva a 5.92 e una parola qualunque va bene: è il
+ * motivo per cui il bottone «Salva» della scheda usa quel riempimento.
+ *
+ * ── DA CHIEDERE AL WP01 ─────────────────────────────────────────────────────
+ *
+ *   1. `--sg-accent-ink`   — l'inchiostro sopra `--sg-accent`, con la nota che
+ *                            regge solo il testo grande;
+ *   2. `--sg-accent-quiet-ink` — sopra `--sg-accent-quiet`, che regge tutto.
+ *
+ * Finché non ci sono, ogni uso passa di qui.
+ */
+:root {
+  --sf-accent-ink: #FFFFFF;
+}
+
 /* La conchiglia — il telaio, e nient'altro.
  *
  * ESTRATTO da `index.html` il 2026-09-23, byte per byte: la pagina era un file
@@ -87,7 +136,7 @@
      that is why the number is here. */
   button.primary {
     background: var(--sg-accent); border-color: var(--sg-accent);
-    color: #FFFFFF; font-size: 19px; font-weight: 600;
+    color: var(--sf-accent-ink); font-size: 19px; font-weight: 600;
   }
   button.primary:active { background: var(--sg-accent-quiet);
                           border-color: var(--sg-accent-quiet); }

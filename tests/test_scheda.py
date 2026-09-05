@@ -274,12 +274,21 @@ def test_a_field_the_definition_does_not_declare_is_refused(tmp_path):
 # ── 7 · LE DEFINIZIONI VERE, quando ci sono ─────────────────────────────────
 
 @have_templates
-def test_the_two_real_definitions_are_servable():
+def test_the_three_real_definitions_are_servable():
+    """Erano due fino al 2026-09-23. La terza — la scheda ungherese — è tornata
+    ED È PERMANENTE, perché era nata come prova del vincolo più importante del
+    progetto ed era stata cancellata: *una prova che vive in un documento non è
+    una prova, è un ricordo.*
+
+    Questo test è il lato di QUESTO repository di quella regressione: se una
+    scheda sparisce di là, l'adattatore di qua se ne accorge.
+    """
     env = {schede.SCHEDE_DIR_VARIABLE: str(TEMPLATES)}
     found = {s.id: s for s in schede.available(env)}
-    assert set(found) == {"iccd-us-2021", "es-ue-demo-2026"}
+    assert set(found) == {"iccd-us-2021", "es-ue-demo-2026", "hu-rl-demo-2026"}
     assert len(found["iccd-us-2021"].fields) == 59
     assert len(found["es-ue-demo-2026"].fields) == 15
+    assert len(found["hu-rl-demo-2026"].fields) == 6
 
 
 @have_templates
@@ -289,27 +298,27 @@ def test_the_counts_agree_with_the_repository_that_owns_them():
     se le due parti divergono, una delle due sta leggendo male il marcatore."""
     env = {schede.SCHEDE_DIR_VARIABLE: str(TEMPLATES)}
     found = {s.id: s for s in schede.available(env)}
-    assert found["iccd-us-2021"].counts() == {"unknown": 48, "trench": 8,
+    # 2026-09-24: da 8 a 25 campi da trincea, perche' il field assistant ha
+    # imparato le parole che mancavano (`definizione`, quote, misure, colore,
+    # consistenza) e le dodici caselle dei rapporti — coperte da `relate_su`
+    # dal 21 settembre — sono state finalmente marcate LA'.
+    assert found["iccd-us-2021"].counts() == {"unknown": 31, "trench": 25,
                                               "lab": 3}
     assert found["es-ue-demo-2026"].counts() == {"unknown": 0, "trench": 14,
                                                  "lab": 1}
 
 
 @have_templates
-def test_the_two_sheets_give_a_phone_two_different_forms():
+def test_the_sheets_give_a_phone_three_different_forms():
     """Se il sottoinsieme fosse lo stesso, il marcatore starebbe descrivendo il
     nostro pregiudizio invece che lo standard — e un modulo telefono costruito
-    su di esso mostrerebbe le caselle sbagliate in uno dei due paesi."""
+    su di esso mostrerebbe le caselle sbagliate in uno dei tre paesi."""
     env = {schede.SCHEDE_DIR_VARIABLE: str(TEMPLATES)}
     found = {s.id: s for s in schede.available(env)}
-    us = found["iccd-us-2021"].trench_fields()
-    ue = found["es-ue-demo-2026"].trench_fields()
-    assert len(us) == 8 and len(ue) == 14
-    # …e i rapporti: `unknown` in una, `trench` nell'altra
-    for box in ("copre", "coperto_da", "taglia", "tagliato_da"):
-        assert found["iccd-us-2021"].recorded_in(box) == schede.UNKNOWN
-    for box in ("cubre", "cubierto_por", "corta", "cortado_por"):
-        assert found["es-ue-demo-2026"].recorded_in(box) == schede.TRENCH
+    sizes = {i: len(s.trench_fields()) for i, s in found.items()}
+    assert sizes == {"iccd-us-2021": 25, "es-ue-demo-2026": 14,
+                     "hu-rl-demo-2026": 4}, sizes
+    assert len(set(sizes.values())) == 3
 
 
 @have_templates

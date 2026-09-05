@@ -81,6 +81,39 @@ export function effectiveMode(width) {
   return chosenMode() || proposeMode(width);
 }
 
+/* ── LA BARRA DEI POLLICI È IL PAVIMENTO DEL TELEFONO, NON QUELLO DELLA SCHEDA
+ *
+ * Trovata addosso il 2026-09-24: E.D. sceglie «Telefono» su una finestra da
+ * 1574px per curiosità, e resta chiuso dentro. La catena, misurata nel suo
+ * browser e non dedotta:
+ *
+ *   modo = telefono   → `placeControls` SPOSTA i tre chip nella colonna
+ *                     → la colonna si apre solo da ☰, che sta nella barra
+ *                     → la barra era nascosta perché nessuna scheda era aperta
+ *                     → ☰ non esiste: getBoundingClientRect() su #tb-nav e su
+ *                       #modes tornava {} — nessun rettangolo, nessun bersaglio
+ *                     → e la scelta sta in localStorage, quindi ricaricare la
+ *                       rimette com'era.
+ *
+ * Nessuno di quei passaggi è sbagliato da solo. Insieme sono una porta che si
+ * chiude da fuori. La regola che li tiene onesti è una sola e sta qui:
+ * **finché i controlli vivono nella colonna, la maniglia della colonna deve
+ * esistere**. Quindi la barra c'è per tutto il tempo che il modo è telefono, e
+ * ciò che compare e sparisce sono i bottoni della SCHEDA — che senza una scheda
+ * a schermo non hanno su cosa agire.
+ *
+ * Pura ed esportata perché è l'unica riga di questa interfaccia che si può
+ * sbagliare **in silenzio**: un bottone brutto si vede, una porta murata no.
+ * `tests/test_la_porta_del_telefono.py` la esegue davvero, con node.
+ */
+export function thumbbarPlan(mode, panel, hasDef) {
+  const phone = mode === "phone";
+  return {
+    bar: phone,                                      // la maniglia: sempre
+    steps: phone && panel === "scheda" && Boolean(hasDef),
+  };
+}
+
 /* ── quale elemento per quale tipo ──────────────────────────────────────────
  *
  * LA SOLA DECISIONE DI PRESENTAZIONE, in un posto. I tipi sono quelli che
@@ -344,10 +377,28 @@ export function refreshCompleteness(container, def, state) {
  *
  * Riportato nell'end-of come un buco del formato da chiudere (un
  * `identity.unit_field`), non colmato a intuito qui. Finché non c'è, questa
- * riga è l'assunzione, ed è scritta dove si vede. */
+ * riga era l'assunzione, ed è scritta dove si vede. */
 export const keyField = (def) => {
   const key = def.human_key || [];
-  return key.length ? key[key.length - 1] : null;
+  // DICHIARATO. `identity.human_key.unit_field` (SPEC §1.2) dice QUALE campo è
+  // l'unità, e il servizio lo spedisce con la definizione.
+  if (def.unit_field) return key.includes(def.unit_field) ? def.unit_field : null;
+  // Una chiave di un campo solo non ha niente da dichiarare: è quello.
+  if (key.length === 1) return key[0];
+  // E QUI SI RIFIUTA, invece di indovinare.
+  //
+  // Fino al 2026-09-24 questa riga tornava `key[key.length - 1]` — l'ultimo
+  // campo della chiave — e la sua giustificazione era che valeva per tutte e
+  // tre le definizioni esistenti. Poi ne è arrivata una quarta forma: la scheda
+  // ungherese ha `human_key = [retegszam, lelohely]` e dichiara `retegszam`,
+  // cioè il PRIMO. Misurato contro il nodo vivo prima della riparazione: il
+  // modulo sceglieva `lelohely`, il nome del sito. Una scheda archiviata sotto
+  // «Aquincum» invece che sotto il numero dello strato, senza che niente lo
+  // dicesse.
+  //
+  // Una regolarità osservata su tre casi non è una regola. Senza designatore
+  // dichiarato non si sa, e `save` lo dice con quelle parole.
+  return null;
 };
 
 export function render(container, def, state) {
@@ -385,6 +436,24 @@ export function render(container, def, state) {
     paras.append(group);
   }
   sheet.append(paras);
+
+  // SALVARE, SULLE SOGLIE GRANDI. Sul telefono il bottone sta nella barra dei
+  // pollici; su tablet e scrivania quella barra non c'è — e fino a stasera non
+  // c'era nemmeno il bottone, quindi una scheda compilata al tavolo non si
+  // poteva salvare. Misurato: `#scheda-host` conteneva un solo bottone che non
+  // fosse «Ho controllato», ed era «Svuota la scheda».
+  //
+  // In FONDO, e non accanto a «Svuota»: quella è in cima apposta, per non stare
+  // a un centimetro da questo. Le due azioni non si toccano su nessuna soglia.
+  if (mode !== "phone") {
+    const foot = el("footer", { class: "sheetfoot" });
+    const saveIt = el("button", { class: "primary save", type: "button",
+                                  text: "Salva la scheda" });
+    saveIt.addEventListener("click", () => state.onSave());
+    foot.append(saveIt);
+    sheet.append(foot);
+  }
+
   container.append(sheet);
 
   if (mode === "phone") focusStep(container, state);
@@ -453,6 +522,16 @@ export function payloadFor(def, state) {
 }
 
 export async function save(def, state) {
+  // IL DESIGNATORE PRIMA DEL NUMERO. Senza di lui non si sa quale casella è
+  // l'unità, e «manca il numero» direbbe la cosa sbagliata: il numero magari
+  // c'è, è la definizione che non dice dove.
+  if (!state.keyField) {
+    SG().show(false,
+      `«${def.id}» ha una chiave di ${(def.human_key || []).length} campi e non ` +
+      `dichiara quale sia l'unità (identity.human_key.unit_field): non so ` +
+      `sotto quale identità salvare, e non lo indovino.`, def.id);
+    return false;
+  }
   const body = payloadFor(def, state);
   if (!body.us) {
     SG().show(false, "Una scheda è di un'unità: manca il numero.", def.id);

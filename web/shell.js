@@ -12,7 +12,8 @@
 
 import {
   definitionFor, effectiveMode, keyField, payloadFor, proposeMode,
-  refreshCompleteness, render, save, stepTo, trenchFields, otherFields,
+  refreshCompleteness, render, save, stepTo, thumbbarPlan, trenchFields,
+  otherFields,
 } from "./scheda.js";
 
 const $ = (id) => document.getElementById(id);
@@ -55,6 +56,9 @@ function savedTheme() {
 
 const state = {
   mode: "tablet",
+  // QUALE dei due pannelli è a schermo — «detta» o «scheda». Non si deduce da
+  // `def`: una scheda può essere caricata e il pannello della voce davanti.
+  panel: "voice",
   def: null,
   values: {},
   authored: {},
@@ -70,6 +74,9 @@ const state = {
   onStep: (i, n) => { $("tb-step").textContent = n ? `${i + 1}/${n}` : ""; },
   onValidate: (field) => validateField(field),
   onClear: () => clearScheda(),
+  // Lo stesso atto del bottone della barra dei pollici, chiamato dal piede
+  // della scheda quando la barra non c'è. Una via sola verso `save`.
+  onSave: () => save(state.def, state),
 };
 
 /* ── il modo ─────────────────────────────────────────────────────────────── */
@@ -118,11 +125,24 @@ function placeControls(mode) {
   }
 }
 
+/* L'UNICO posto che decide se la barra dei pollici c'è. Prima erano quattro
+ * righe sparse in quattro funzioni, e la porta murata è nata da lì: `setMode`,
+ * `draw`, `openScheda` e il bottone «Detta» la nascondevano ognuno per conto
+ * suo, e nessuna delle quattro sapeva che dentro c'era l'unica maniglia della
+ * colonna. La decisione è in `thumbbarPlan`, che è pura e provata. */
+function paintThumbbar() {
+  const plan = thumbbarPlan(state.mode, state.panel, state.def);
+  $("thumbbar").hidden = !plan.bar;
+  for (const id of ["tb-prev", "tb-step", "tb-next", "tb-save"]) {
+    $(id).hidden = !plan.steps;
+  }
+}
+
 function setMode(mode) {
   state.mode = mode;
   $("surface").dataset.sgMode = mode;
   placeControls(mode);
-  $("thumbbar").hidden = mode !== "phone" || !state.def;
+  paintThumbbar();
   $("sidenav").dataset.open = "false";
   $("nav-onepage").hidden = mode !== "desktop";
   paintModes();
@@ -179,6 +199,7 @@ async function loadSchede() {
 
 async function openScheda(id) {
   const says = $("scheda-says");
+  state.panel = "scheda";
   $("scheda").hidden = false;
   $("work").hidden = true;
   says.hidden = true;
@@ -215,7 +236,7 @@ async function openScheda(id) {
     // etichette sarebbe inventare uno standard.
     state.def = null;
     $("scheda-host").replaceChildren();
-    $("thumbbar").hidden = true;
+    paintThumbbar();
     says.hidden = false;
     says.textContent =
       `Non ho la definizione di «${id}» e non riesco a chiederla al nodo. ` +
@@ -232,7 +253,7 @@ function markNav(id) {
 
 function draw() {
   render($("scheda-host"), state.def, state);
-  $("thumbbar").hidden = state.mode !== "phone";
+  paintThumbbar();
   const shown = state.mode === "phone" && !state.showAll
     ? trenchFields(state.def) : state.def.fields;
   $("nav-all-count").textContent =
@@ -291,9 +312,10 @@ function wireShell() {
   });
 
   $("nav-voice").addEventListener("click", () => {
+    state.panel = "voice";
     $("scheda").hidden = true;
     $("work").hidden = false;
-    $("thumbbar").hidden = true;
+    paintThumbbar();
     markNav("");
     $("nav-voice").setAttribute("aria-current", "true");
   });
@@ -328,4 +350,4 @@ loadSchede();
 // Esposto per la verifica dal browser: è quello che una cattura non può
 // dimostrare (dove stanno i bersagli, quale modo è attivo, quanti campi).
 window.SGShell = { state, openScheda, setMode, draw, trenchFields, otherFields,
-                   payloadFor };
+                   payloadFor, paintThumbbar, thumbbarPlan };
