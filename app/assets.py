@@ -359,9 +359,36 @@ def asset_store_from_env(environ: Optional[Dict[str, str]] = None) -> AssetStore
     return InMemoryAssetStore()
 
 
-#: This process's asset store. Built at import, like the snapshot one, so a
-#: misconfiguration fails when the process starts rather than at the first upload.
-ASSET_STORE: AssetStore = asset_store_from_env()
+#: This process's asset store — built on FIRST USE, not at import.
+#:
+#: **A declared divergence from StratiGraph Server's copy of this module**, and
+#: the only one. There it is `ASSET_STORE = asset_store_from_env()` at import,
+#: and that is right for a relay: a server that cannot reach its bucket is
+#: misconfigured and should refuse to start where somebody is watching.
+#:
+#: It is wrong for a FIELD NODE, and it was measured on 2026-09-27 and again on
+#: 2026-09-30: with MinIO unplugged the whole service refuses to come up —
+#: `RuntimeError: the object store at http://minio:9000 did not answer … the
+#: field node will not start without the store it is configured to write to`.
+#: On a node that switches on inside a tunnel, that line says the assistant does
+#: not open. A node with a LARDER (`app/spool.py`) does not need the bucket to
+#: work: it needs it to deliver, later, when there is a network.
+#:
+#: So the construction moved behind PEP 562's module `__getattr__`: importing
+#: this module touches nothing, and the first READ of `ASSET_STORE` builds it
+#: and raises there if it is misconfigured. A process that never reads it —
+#: which is exactly a node running on its larder — never asks the network
+#: anything at start-up.
+_ASSET_STORE: Optional[AssetStore] = None
+
+
+def __getattr__(name: str) -> Any:
+    if name == "ASSET_STORE":
+        global _ASSET_STORE
+        if _ASSET_STORE is None:
+            _ASSET_STORE = asset_store_from_env()
+        return _ASSET_STORE
+    raise AttributeError(name)
 
 _HEX = set("0123456789abcdef")
 

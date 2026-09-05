@@ -36,9 +36,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import authorship
+from . import authorship, exif
 from .contract import (GraphDelta, Slot, ToolDescriptor, ToolRegistry,
                        ToolResult, stable_id)
+from .spool import verify as spool_verify
 
 #: The DTC term for "this was made by that act". Not a word invented here: it is
 #: the one `s3dgraphy.publication` already uses for a genesis event.
@@ -701,6 +702,24 @@ def make_attach_photo(graph_writer, asset_store) -> ToolDescriptor:
         if not isinstance(photo, (bytes, bytearray)) or not photo:
             return ToolResult(ok=False,
                               message="Non ho ricevuto nessuna foto.")
+
+        # IL DIGEST CHE IL CLIENT DICHIARA, verificato PRIMA di scrivere.
+        #
+        # Misurato: un base64 troncato a un multiplo di 4 si decodifica pulito
+        # e produce mezza foto — 200 007 byte su 400 014, senza il `FFD9` che
+        # chiude un JPEG — con un `ref` perfettamente valido. Una probabilità
+        # su quattro, e dopo non se ne accorge più nessuno, perché il
+        # content-addressing rende quel mezzo file coerente con il proprio nome.
+        #
+        # Chi non dichiara niente passa come prima: rifiutare chi tace
+        # romperebbe in una notte ogni client che oggi manda foto. È un
+        # controllo che si può fare, non un cancello che si può chiudere —
+        # e la differenza è dichiarata qui e in `/health`.
+        try:
+            spool_verify(bytes(photo), str(slots.get("sha256") or ""))
+        except ValueError as storto:
+            return ToolResult(ok=False, message=str(storto),
+                              data={"us": number, "reason": "digest-mismatch"})
         unit_id = f"US{number}"
         if not graph_writer.has_node(unit_id):
             # Not an error, and not a silent creation either: saying it is what
@@ -724,6 +743,22 @@ def make_attach_photo(graph_writer, asset_store) -> ToolDescriptor:
                      "media_type": stored.get("media_type"),
                      "created_by": author, "created_at": _now()},
         }
+
+        # ── quello che la foto porta con sé, TRASPORTATO e non capito ───────
+        #
+        # Stessa regola dei `rapporti` di pyArchInit qui sopra: sotto una chiave
+        # sola, così chi legge distingue sempre quello che questo servizio ha
+        # CAPITO da quello che ha soltanto portato. Nessuno di questi campi
+        # diventa un campo del grafo, e la proposta su quali dovrebbero
+        # diventarlo sta nel referto del 30 settembre — misurata su ventuno
+        # foto vere, di cui **zero** avevano una posizione.
+        #
+        # `created_at` qui sopra è QUANDO LA RIGA È STATA SCRITTA. Non è la
+        # stessa cosa di `DateTimeOriginal`, e sulla foto misurata stanotte
+        # fra i due ci sono cinque anni.
+        portati = exif.read(bytes(photo))
+        if portati:
+            resource["data"]["source_fields"] = {"exif": portati}
         edge = {"id": f"{unit_id}__has_linked_resource__{resource_id}",
                 "source": unit_id, "target": resource_id,
                 "edge_type": "has_linked_resource"}
@@ -747,7 +782,10 @@ def make_attach_photo(graph_writer, asset_store) -> ToolDescriptor:
         input_schema=[Slot("us", "string", True, "il numero dell'unità"),
                       Slot("photo", "bytes", True, "i byte dell'immagine"),
                       Slot("filename", "string", False, "il nome del file"),
-                      Slot("media_type", "string", False, "il tipo MIME")],
+                      Slot("media_type", "string", False, "il tipo MIME"),
+                      Slot("sha256", "string", False,
+                           "il digest che il client si aspetta, verificato "
+                           "prima di scrivere")],
         description="La foto va nell'object store e diventa una risorsa "
                     "dell'unità.",
         service="s3dgraphy", handler=handler)

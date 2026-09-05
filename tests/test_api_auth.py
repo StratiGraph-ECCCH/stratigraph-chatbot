@@ -37,7 +37,12 @@ def node(tmp_path, monkeypatch):
     writer = LocalWriter(str(tmp_path / "scavo.em.json"), study="Saggio B")
     store = InMemoryAssetStore()
     monkeypatch.setattr(main_module, "WRITER", writer)
-    monkeypatch.setattr(main_module, "ASSET_STORE", store)
+    # `STORE` e non `ASSET_STORE`: dal 30 settembre il nome che i tool usano è
+    # quello, e può essere la DISPENSA (`app/spool.py`) invece del bucket.
+    # `LARDER=None` perché questo nodo di prova non ne ha una, ed è il ramo che
+    # questi test misurano.
+    monkeypatch.setattr(main_module, "STORE", store)
+    monkeypatch.setattr(main_module, "LARDER", None)
     monkeypatch.setattr(main_module, "REGISTRY", build_registry(writer, store))
     return writer, store
 

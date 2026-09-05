@@ -15,9 +15,15 @@ import {
   refreshCompleteness, render, save, stepTo, thumbbarPlan, trenchFields,
   otherFields,
 } from "./scheda.js";
+import { mount as mountPhotos } from "./photos.js";
 
 const $ = (id) => document.getElementById(id);
 const SG = () => window.SG || {};
+
+/* Ridisegna la striscia delle foto. Assegnata al montaggio: prima di allora
+ * non c'è niente da ridisegnare, e una funzione che non fa niente sarebbe una
+ * bugia comoda. */
+let repaintPhotos = () => {};
 
 const MODES = [
   ["phone", "Telefono"],
@@ -333,6 +339,16 @@ function wireShell() {
 
   wireThumbbar();
 
+  // LE FOTO. Montate da qui e non dalla pagina perché è qui che si sa quale
+  // scheda è aperta — e la scheda aperta è il CONTESTO da cui esce la
+  // proposta. `proposeUs` è una funzione e non un valore: la proposta è quella
+  // del momento in cui si tocca la miniatura, non quella dello scatto.
+  repaintPhotos = mountPhotos({
+    shoot: $("shoot"), camera: $("camera"), host: $("photos"),
+    seam: SG(), proposeUs: () => state.us || "",
+  });
+  repaintPhotos();
+
   // Il modo si RIPROPONE quando la finestra cambia, ma non sovrascrive una
   // scelta: `effectiveMode` guarda prima cosa è stato scelto.
   window.addEventListener("resize", () => {
@@ -350,4 +366,5 @@ loadSchede();
 // Esposto per la verifica dal browser: è quello che una cattura non può
 // dimostrare (dove stanno i bersagli, quale modo è attivo, quanti campi).
 window.SGShell = { state, openScheda, setMode, draw, trenchFields, otherFields,
-                   payloadFor, paintThumbbar, thumbbarPlan };
+                   payloadFor, paintThumbbar, thumbbarPlan,
+                   repaintPhotos: () => repaintPhotos() };

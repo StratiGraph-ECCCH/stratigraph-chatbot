@@ -42,8 +42,10 @@ from fastapi import (APIRouter, Body, FastAPI, File, Form, HTTPException,
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
-from .assets import ASSET_STORE
+from . import assets
 from .assets import describe as asset_describe
+from .spool import describe as larder_describe
+from .spool import shared_name, spool_from_env
 from .auth import AuthDependency, authenticator, principal_orcid
 from .contract import ToolResult, invoke
 from .intent import COMMAND_LANGUAGE, understand
@@ -130,9 +132,30 @@ app = FastAPI(
 
 #: Built at import, so a misconfiguration fails at STARTUP rather than in a
 #: trench. The order matters: the writer may refuse (a room with no token).
-WRITER = writer_from_env()
+#: LA DISPENSA, costruita UNA VOLTA e data a tutti e due — lo scrivano, che
+#: decide quando i byte salgono, e i tool, che ce li mettono. Due istanze sulla
+#: stessa directory sarebbero due processi con la stessa coda: il difetto che il
+#: `flock` di `bridge.py` esiste per chiudere, riaperto un metro più in là.
+#:
+#: E costruita QUI e non dentro `writer_from_env` per una ragione misurata
+#: stanotte: senza stanza lo scrivano è un `LocalWriter`, che non ha una
+#: dispensa — e un nodo senza stanza è esattamente il nodo di campo, cioè
+#: quello che ne ha più bisogno. La prima versione la prendeva dal writer e
+#: `/health` diceva «nessuna» con la variabile impostata.
+LARDER = spool_from_env()
+WRITER = writer_from_env(spool=LARDER)
 STT = stt_from_env()
-REGISTRY = build_registry(WRITER, ASSET_STORE)
+
+#: LO STORE CHE I TOOL VEDONO. Se questo nodo ha una dispensa è quella, e non
+#: MinIO: `Spool` implementa lo stesso `AssetStore`, quindi nessun tool sa la
+#: differenza — cambia solo QUANDO si parla con la rete. Un nodo di scrivania
+#: senza dispensa continua a scrivere diritto nel bucket, che è la cosa giusta
+#: quando la rete è sotto il tavolo.
+#: E `assets.ASSET_STORE` si LEGGE solo se non c'è una dispensa: leggerlo è
+#: quello che lo costruisce, e costruirlo è un giro di rete. Un nodo di campo
+#: con la dispensa non deve chiedere niente a nessuno per accendersi.
+STORE = LARDER if LARDER is not None else assets.ASSET_STORE
+REGISTRY = build_registry(WRITER, STORE)
 
 #: The intent model is OPTIONAL and absent by default. The rules answer the
 #: field card's commands, which is what the MVP needs; a model is used on the
@@ -171,6 +194,11 @@ class Health(BaseModel):
     #: it at the next sync, not now — and an operator has to be able to tell.
     writes_to: str = "local container"
     asset_store: str = "memory"
+    #: LA DISPENSA: i byte che non hanno ancora raggiunto lo store condiviso.
+    #: Detta anche quando è vuota, perché «nessuna dispensa» è una
+    #: configurazione — su un nodo di campo vuol dire che una foto scattata
+    #: senza rete si perde — e non un dettaglio.
+    larder: str = "nessuna (i byte vanno diritti allo store: senza rete si perdono)"
     speech: str = "passthrough"
     #: Kept, and DERIVED from the line below: a probe that only ever asked
     #: "is there one?" must not break the day the answer got longer.
@@ -298,7 +326,12 @@ def _health() -> Health:
         s3dgraphy=_s3dgraphy_version(),
         auth=authenticator.settings.describe(),
         writes_to=writer_describe(WRITER),
-        asset_store=asset_describe(ASSET_STORE),
+        # Con la dispensa, lo store condiviso si NOMINA dalla configurazione e
+        # non si costruisce: costruirlo è un giro di rete, e una spia che si
+        # blocca quando la rete manca è la spia che si spegne quando serve.
+        asset_store=(asset_describe(assets.ASSET_STORE) if LARDER is None
+                     else shared_name()),
+        larder=larder_describe(LARDER),
         speech=stt_describe(STT),
         intent_model=INTENT_MODEL is not None,
         intent=intent_describe(INTENT_MODEL),
@@ -659,7 +692,8 @@ async def listen(request: Request,
                  audio: UploadFile = File(...),
                  us: Optional[str] = Form(default=None),
                  language: Optional[str] = Form(default=None),
-                 photo: Optional[UploadFile] = File(default=None)) -> Answer:
+                 photo: Optional[UploadFile] = File(default=None),
+                 photo_sha256: Optional[str] = Form(default=None)) -> Answer:
     """Audio in — transcribed on the node, then exactly as `/say`.
 
     A photo may ride along, because that is how the gesture actually happens:
@@ -693,6 +727,8 @@ async def listen(request: Request,
         slots["photo"] = await photo.read()
         slots["filename"] = photo.filename
         slots["media_type"] = photo.content_type
+        if photo_sha256:
+            slots["sha256"] = photo_sha256
     return _run(transcript, slots, _author(request))
 
 
@@ -704,6 +740,12 @@ class PhotoBody(BaseModel):
     photo_base64: str = ""
     filename: Optional[str] = None
     media_type: str = "image/jpeg"
+    #: IL DIGEST CHE IL MITTENTE SI ASPETTA — `sha256:<hex>`, o il solo hex.
+    #: Facoltativo, e verificato quando c'è: un base64 troncato a un multiplo
+    #: di 4 si decodifica in mezza foto con un riferimento valido, e senza
+    #: questa riga nessuno può più accorgersene. Chi non lo manda passa come
+    #: prima, dichiaratamente (vedi `spool.verify`).
+    sha256: str = ""
 
 
 @v1.post("/photo", response_model=Answer, tags=["assistant"])
@@ -714,6 +756,8 @@ def photo(request: Request, body: PhotoBody = Body(...)) -> Answer:
         raise HTTPException(status_code=400,
                             detail="photo_base64 is not base64") from None
     slots: Dict[str, Any] = {"photo": raw, "media_type": body.media_type}
+    if body.sha256:
+        slots["sha256"] = body.sha256
     if body.us:
         slots["us"] = body.us
     if body.filename:

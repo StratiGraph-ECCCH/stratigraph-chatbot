@@ -38,6 +38,7 @@ from typing import Any, Dict, List, Optional, Protocol
 
 from .bridge import Bridge, bridge_for
 from .contract import GraphDelta
+from .spool import Spool, spool_from_env
 from .session import RoomSession, SessionClosed, SessionRefused
 
 log = logging.getLogger("stratigraph.writer")
@@ -56,6 +57,18 @@ class RoomRefused(RuntimeError):
     is the room applying a rule correctly, and quietly writing the delta to the
     local container instead would hide that rule and produce two copies of a
     study that disagree. Unreachable falls back; refused is raised.
+    """
+
+
+class BytesFirst(RuntimeError):
+    """C'è una foto che non ha ancora raggiunto lo store condiviso.
+
+    Non è un guasto e non è un rifiuto della stanza: è **l'ordine**. Un'
+    operazione che cita dei byte non deve partire prima dei byte, altrimenti
+    ogni presente vede un riferimento a un oggetto che non esiste. Sale come
+    un'eccezione perché `apply` sa già cosa fare con una consegna che non passa
+    — la mette sul ponte e la tiene nel container locale — e questa è
+    esattamente la cosa giusta da fare anche qui.
     """
 
 
@@ -376,6 +389,7 @@ class RoomWriter:
     def __init__(self, base_url: str, room_id: str, token: str, *,
                  fallback: Optional[GraphWriter] = None,
                  bridge: Optional[Bridge] = None,
+                 spool: Optional[Any] = None,
                  timeout: float = 10.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.room_id = room_id
@@ -405,6 +419,18 @@ class RoomWriter:
         #: difetto non era esprimibile. Lo monta `writer_from_env`, dove si
         #: legge la configurazione: è lì che si decide cosa questo nodo ha.
         self.bridge = bridge
+        #: LA DISPENSA — i byte che devono ancora raggiungere lo store
+        #: condiviso. Sta accanto al ponte e non dentro, e l'ordine fra le due
+        #: è la regola della notte del 30 settembre:
+        #:
+        #:     finché la dispensa non è vuota, il ponte non si attraversa.
+        #:
+        #: Perché un'operazione che cita una foto e arriva prima dei byte
+        #: mette nel grafo di TUTTI un riferimento a un oggetto che non esiste,
+        #: subito, col fan-out — mentre byte che arrivano prima della loro
+        #: operazione sono solo byte che per un istante nessuno cita.
+        #: Il cancello che lo dimostra è in `tests/test_le_foto_e_la_scheda.py`.
+        self.spool = spool
         self.degraded = False
         #: WHY the last write did not go through, if it did not. `describe()`
         #: reads it: "degraded" without a reason is a status light with no label.
@@ -558,6 +584,7 @@ class RoomWriter:
         adesso e resta — e la consegna passa da lì.
         """
         self._seated()
+        self._bytes_before_words()
         for op in ops:
             self.session.send("op", op)
             self._result_of(op)
@@ -595,6 +622,19 @@ class RoomWriter:
         # dov'è, `bridge.last_refusal` dice perché, e si riprova al prossimo
         # rientro. Bloccare una scheda nuova per una vecchia in coda sarebbe
         # scambiare un ritardo per una perdita.
+        #
+        # PRIMA I BYTE, POI LE PAROLE. La dispensa sale per prima, e se resta
+        # qualcosa in attesa il ponte NON si attraversa: consegnare
+        # un'operazione che cita una foto che non è ancora nello store
+        # condiviso mette un riferimento vuoto nel grafo di tutti i presenti.
+        try:
+            self._larder = self._cross_the_larder()
+        except Exception as exc:          # noqa: BLE001
+            log.warning("la dispensa non è salita: %s", exc)
+        if self._byte_in_attesa():
+            log.info("il ponte aspetta: %d byte devono ancora salire",
+                     len(self.spool))
+            return
         try:
             self._crossed = self._cross_the_bridge()
         except Exception as exc:          # noqa: BLE001
@@ -613,6 +653,43 @@ class RoomWriter:
             self.bridge.keep(ops, why=why)
         except Exception as exc:          # noqa: BLE001
             log.warning("il ponte non ha preso %d operazioni: %s", len(ops), exc)
+
+    def _bytes_before_words(self) -> None:
+        """Nessuna parola sul filo finché ci sono byte in attesa.
+
+        Sale come `BytesFirst`, che `apply` e `update` trattano come
+        qualunque consegna che non passa: le operazioni vanno sul ponte, con la
+        ragione scritta accanto, e ripartiranno nell'ordine giusto quando la
+        dispensa sarà salita. Non è un ripiego: è la regola.
+        """
+        if not self._byte_in_attesa():
+            return
+        quanti = len(self.spool)
+        perche = self.spool.last_refusal or "lo store condiviso non risponde"
+        raise BytesFirst(
+            f"{quanti} foto devono ancora raggiungere lo store condiviso "
+            f"({perche}): le operazioni aspettano, perché citarle adesso "
+            f"metterebbe nel grafo un riferimento a byte che non ci sono.")
+
+    def _byte_in_attesa(self) -> bool:
+        """C'è ancora qualche foto che non ha raggiunto lo store condiviso?
+
+        Se sì, nessuna operazione parte. Vedi `self.spool`: è la regola in una
+        riga, e questo metodo è il posto in cui è vera.
+        """
+        return bool(self.spool is not None and len(self.spool))
+
+    def _cross_the_larder(self) -> Optional[Dict[str, Any]]:
+        """Fai salire i byte che aspettano, **prima** di qualunque parola.
+
+        Chiamata da `_seated()` appena la sessione si apre, come il ponte e
+        subito prima di lui. Un fallimento non fa fallire la consegna in corso:
+        la dispensa resta dov'è, `spool.last_refusal` dice perché, e le
+        operazioni aspettano — che è il comportamento giusto, non un ripiego.
+        """
+        if self.spool is None or not len(self.spool):
+            return None
+        return self.spool.deliver()
 
     def _cross_the_bridge(self) -> Optional[Dict[str, Any]]:
         """Consegna quello che aspettava, **prima** di qualunque cosa nuova.
@@ -814,6 +891,7 @@ class RoomWriter:
     def _send_updates(self, ops: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Come sopra, ma un campo rifiutato NON solleva: torna nell'esito."""
         self._seated()
+        self._bytes_before_words()
         outcomes: List[Dict[str, Any]] = []
         for op in ops:
             if op["op"] == "add_node" and _absent(outcomes):
@@ -920,7 +998,8 @@ class RoomWriter:
         return "Non riesco a leggere il grafo da qui."
 
 
-def writer_from_env(environ: Optional[Dict[str, str]] = None) -> GraphWriter:
+def writer_from_env(environ: Optional[Dict[str, str]] = None, *,
+                    spool: Optional[Spool] = None) -> GraphWriter:
     """A room when the node names one, the local container otherwise.
 
     Never silent in either direction: `/health` says which is answering, because
@@ -928,6 +1007,15 @@ def writer_from_env(environ: Optional[Dict[str, str]] = None) -> GraphWriter:
     about a field assistant.
     """
     env = dict(environ if environ is not None else os.environ)
+    # LA DISPENSA, se questo nodo ne ha una. PASSATA, non dedotta qui: è la
+    # stessa lezione del ponte due notti fa. `main.py` la costruisce una volta
+    # sola e la dà sia allo scrivano sia ai tool, perché due istanze sulla
+    # stessa directory sarebbero due processi con la stessa coda — il difetto
+    # che il `flock` di `bridge.py` esiste per chiudere, riaperto un metro più
+    # in là. Costruita qui solo se nessuno l'ha passata (un nodo che non usa
+    # `main.py`, e i test).
+    if spool is None:
+        spool = spool_from_env(env)
     local = LocalWriter(env.get("EM_CHATBOT_CONTAINER")
                         or "data/scavo.em.json",
                         study=env.get("EM_CHATBOT_STUDY") or "Scavo")
@@ -956,7 +1044,7 @@ def writer_from_env(environ: Optional[Dict[str, str]] = None) -> GraphWriter:
                 "sign-in (it follows the link and gets one), or set "
                 "EM_CHATBOT_TOKEN for a headless node.")
         return RoomWriter(where["server"], where["room"], token, fallback=local,
-                          bridge=bridge_for(local.path))
+                          bridge=bridge_for(local.path), spool=spool)
 
     base = (env.get("EM_SERVER_URL") or "").strip()
     room = (env.get("EM_CHATBOT_ROOM") or "").strip()
@@ -971,7 +1059,7 @@ def writer_from_env(environ: Optional[Dict[str, str]] = None) -> GraphWriter:
         # un nodo di cui si salva il volume si porta dietro sia la copia sia
         # quello che deve ancora partire.
         return RoomWriter(base, room, token, fallback=local,
-                          bridge=bridge_for(local.path))
+                          bridge=bridge_for(local.path), spool=spool)
     return local
 
 
@@ -990,6 +1078,18 @@ def describe(writer: Any) -> str:
         # affatto — un `RoomWriter` costruito a mano, senza container locale —
         # lo dice anche quello, perché «nessun ponte» è una configurazione e non
         # un dettaglio.
+        # LA DISPENSA VA DETTA COME IL PONTE, e per lo stesso motivo: dei byte
+        # che non sono ancora saliti sono un lavoro che non è arrivato a
+        # nessuno, e finché nessuno li nomina somiglia a un servizio che
+        # funziona. In più tengono ferme le operazioni, e chi legge `/health`
+        # deve poter capire PERCHÉ la coda non si svuota.
+        dispensa = ""
+        if writer.spool is not None and len(writer.spool):
+            stato = writer.spool.describe()
+            fermo = (f", ferma su {stato['stuck_because']}"
+                     if stato["stuck_because"] else "")
+            dispensa = (f" · larder: {stato['waiting']} photos waiting "
+                        f"({stato['bytes'] / 1024:.0f} KB){fermo}")
         if writer.bridge is None:
             ponte = " · no bridge (a dropped write is lost)"
         else:
@@ -999,7 +1099,7 @@ def describe(writer: Any) -> str:
                 perche = writer.bridge.last_refusal
                 ponte = (f" · bridge: {in_attesa} waiting"
                          + (f", stuck on {perche}" if perche else ""))
-        return f"room {writer.room_id} at {writer.base_url}{state}{ponte}"
+        return f"room {writer.room_id} at {writer.base_url}{state}{dispensa}{ponte}"
     if isinstance(writer, LocalWriter):
         return f"local container ({writer.path})"
     return type(writer).__name__

@@ -161,8 +161,14 @@ def test_the_dom_handles_the_script_needs_are_all_still_there():
     """The restyle is GRAPHICS ONLY. Every id the script reaches for, and the
     two state classes it sets."""
     page = PAGE.read_text(encoding="utf-8")
+    # `shot` — la miniatura singola — È STATA TOLTA il 30 settembre, con
+    # intento: una foto per volta era la superficie giusta finché una foto
+    # partiva subito. Da stanotte le foto ASPETTANO (in IndexedDB, misurato:
+    # 12,5 GB contro i 49 MB di `localStorage`) e possono essere più d'una, e
+    # una miniatura sola non sa dire «tre aspettano». Al suo posto c'è
+    # `photos`, la striscia che `web/photos.js` disegna.
     for handle in ("state", "rec", "shoot", "where", "hint", "typed", "send",
-                   "shot", "said", "answer", "queue", "camera"):
+                   "photos", "said", "answer", "queue", "camera"):
         assert f'id="{handle}"' in page, handle
     # The state classes live in `shell.css` since the split; the ids live in the
     # page. Two files, one property: the script still finds everything it

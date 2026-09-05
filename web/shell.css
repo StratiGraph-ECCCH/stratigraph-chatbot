@@ -227,7 +227,61 @@
      put in the hands of somebody standing in a trench. */
   #gate p { margin: 0 0 var(--sg-space-4); }
 
-  img.shot {
-    max-width: 100%; border-radius: var(--sg-radius);
-    margin-top: var(--sg-space-3); border: 1px solid var(--sg-line);
+  /* ── le foto che aspettano ────────────────────────────────────────────────
+     Una striscia che scorre di lato, non una griglia che cresce in basso: su un
+     telefono la griglia spinge fuori schermo il bottone grande, e il bottone
+     grande è la cosa che serve mentre si scava. Scorrere di lato costa un
+     pollice; scorrere in su costa il posto.
+
+     OGNI COLORE È UN RUOLO. Il bordo dice lo stato senza una parola in più:
+     `--sg-warn` è «serve una persona» (una foto senza unità è esattamente
+     quello), `--sg-info` è «un fatto dichiarato» (l'unità c'è, sta partendo).
+     Sono i ruoli che il tema dichiara, e nessun esadecimale nuovo. */
+  .waiting { margin-top: var(--sg-space-4); }
+  .waiting .hint { margin: var(--sg-space-2) 0 0; }
+
+  .shots {
+    display: flex; gap: var(--sg-space-3);
+    overflow-x: auto; padding-bottom: var(--sg-space-2);
+    /* Il pollice si ferma su una foto intera e non a metà fra due. */
+    scroll-snap-type: x proximity;
   }
+  .shot-cell {
+    flex: 0 0 auto; width: 104px;
+    background: var(--sg-surface);
+    border: 2px solid var(--sg-warn); border-radius: var(--sg-radius);
+    overflow: hidden; scroll-snap-align: start;
+  }
+  .shot-face {
+    display: block; width: 100%; padding: 0; margin: 0;
+    background: none; color: var(--sg-text); border: 0;
+    box-shadow: none; text-align: left; border-radius: 0;
+  }
+  .shot-cell[data-state="pronta"] { border-color: var(--sg-info); }
+  .shot-face img {
+    display: block; width: 100%; height: 78px; object-fit: cover;
+    background: var(--sg-surface-sunk);
+  }
+  .shot-face > span {
+    display: block; padding: 5px var(--sg-space-2) 3px;
+    font-family: var(--sg-font-mono); font-size: var(--sg-text-xs);
+    color: var(--sg-muted);
+  }
+  /* Dietro, e piccolo: cambiare numero è l'eccezione, non il gesto. Sta in un
+     angolo perché il pollice che tocca la foto non ci arrivi per sbaglio. */
+  /* Il nome, quando il browser non sa disegnare il formato (HEIC): il posto
+     della miniatura, non un'icona rotta. */
+  .shot-blind {
+    display: flex; align-items: center; height: 78px; padding: 0 var(--sg-space-2);
+    background: var(--sg-surface-sunk); color: var(--sg-muted);
+    font-family: var(--sg-font-mono); font-size: var(--sg-text-xs);
+    overflow: hidden;
+  }
+
+  .shot-other {
+    width: auto; margin: 0; padding: 3px var(--sg-space-2) 5px;
+    font-size: var(--sg-text-xs); box-shadow: none;
+    background: none; color: var(--sg-accent-quiet);
+    text-decoration: underline;
+  }
+

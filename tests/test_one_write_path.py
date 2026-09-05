@@ -45,6 +45,20 @@ ALLOWED = {
     "intent.py": "il modello di intento sul nodo (/chat/completions)",
     "handoff.py": "il realm (scambio del codice OIDC) e /v1/auth-config",
     "assets.py": "lo store degli asset del nodo",
+    # 2026-09-30 · IL CANCELLO NON È SCATTATO, e lo dichiaro lo stesso, perché
+    # è la conversazione che questa tabella esiste per avere.
+    #
+    # `spool.py` non apre niente da sé: chiama `assets.py`, che è già
+    # dichiarato. Ma è LUI che decide QUANDO si parla con lo store condiviso —
+    # mai dentro il gesto di chi fotografa, solo al rientro — e quella
+    # decisione è la cura di una misura precisa: 306 153 ms con il telefono in
+    # mano, e la foto persa in fondo. Un modulo che governa il momento in cui
+    # si tocca la rete appartiene a questa tabella anche se la regex non lo
+    # vede, altrimenti la tabella dice meno di quello che si sa.
+    #
+    # NON è una seconda via verso il GRAFO: `spool.py` non compone operazioni
+    # CRDT (lo tiene il test qui sotto) e non parla con la stanza.
+    "spool.py": "lo store condiviso, ma SOLO al rientro: mai dentro il gesto",
     "auth.py": "il realm (JWKS, discovery)",
 }
 

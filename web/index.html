@@ -127,6 +127,11 @@
         <button id="shoot">📷 Photo</button>
         <button id="where">📍 Where am I</button>
       </div>
+      <!-- LE FOTO CHE ASPETTANO. Una foto scattata e non ancora collegata è
+           uno stato legittimo del lavoro — E.D. dice «faccio delle foto, LE
+           collego», al plurale e dopo — quindi si vede e si nomina invece di
+           essere nascosta. La disegna `web/photos.js`. -->
+      <div class="waiting" id="photos" hidden></div>
       <p class="hint" id="hint">If there is no microphone, type the command below.</p>
       <!-- The placeholder is NOT translated: it is an example of a command THIS
            NODE understands, and the node publishes its vocabulary at /v1/tools.
@@ -135,7 +140,6 @@
       <input type="text" id="typed" enterkeyhint="send">
       <button id="send">Send</button>
       <p class="hint" id="commands-in"></p>
-      <img class="shot" id="shot" hidden alt="">
       <div class="said" id="said"></div>
     </section>
 
@@ -231,6 +235,16 @@ const STRINGS = {
     "queue.sent.one": "I sent 1 queued thing.",
     "queue.sent.many": "I sent {n} queued things.",
     "queue.kept": "Node unreachable: I put it in the queue.",
+    "photos.waiting.one": "1 photo waiting to be linked.",
+    "photos.waiting.many": "{n} photos waiting to be linked.",
+    "photos.ready.one": "1 photo linked, waiting for the node.",
+    "photos.ready.many": "{n} photos linked, waiting for the node.",
+    "photos.unlinked": "not linked",
+    "photos.propose": "US {us}?",
+    "photos.on": "US {us}",
+    "photos.other": "other number",
+    "photos.ask": "Which unit is this photo of?",
+    "photos.nokeep": "I could not keep the photo on this device: it was NOT taken.",
     "signin.failed": "Sign-in failed: ",
     "signin.noPending": "this tab had no sign-in in progress.",
     "signin.badState": "the sign-in state does not match: refusing a code this tab did not ask for.",
@@ -275,6 +289,16 @@ const STRINGS = {
     "queue.sent.one": "Ho mandato 1 cosa in coda.",
     "queue.sent.many": "Ho mandato {n} cose in coda.",
     "queue.kept": "Nodo non raggiungibile: l'ho messo in coda.",
+    "photos.waiting.one": "1 foto aspetta di essere collegata.",
+    "photos.waiting.many": "{n} foto aspettano di essere collegate.",
+    "photos.ready.one": "1 foto collegata, aspetta il nodo.",
+    "photos.ready.many": "{n} foto collegate, aspettano il nodo.",
+    "photos.unlinked": "non collegata",
+    "photos.propose": "US {us}?",
+    "photos.on": "US {us}",
+    "photos.other": "altro numero",
+    "photos.ask": "Di che unità è questa foto?",
+    "photos.nokeep": "Non sono riuscito a tenere la foto su questo dispositivo: NON è stata scattata.",
     "signin.failed": "Firma non riuscita: ",
     "signin.noPending": "questa scheda non aveva una firma in corso.",
     "signin.badState": "lo stato della firma non corrisponde: rifiuto un codice che questa scheda non ha chiesto.",
@@ -1090,27 +1114,21 @@ $("send").addEventListener("click", sendTyped);
 $("typed").addEventListener("keydown", (e) => { if (e.key === "Enter") sendTyped(); });
 
 // ── shoot ───────────────────────────────────────────────────────────────────
-$("shoot").addEventListener("click", () => $("camera").click());
-$("camera").addEventListener("change", async () => {
-  const file = $("camera").files[0];
-  if (!file) return;
-  const shot = $("shot");
-  shot.src = URL.createObjectURL(file);
-  shot.hidden = false;
-  const base64 = await new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1]);
-    reader.readAsDataURL(file);
-  });
-  // Which unit? Whatever the last sentence said — and if it said none, the
-  // node refuses and SAYS so, which is better than this page guessing.
-  const us = (saidBox.textContent.match(/\b(\d{1,5})\b/) || [])[1] || "";
-  await send("/v1/photo", {
-    transcript: "questa foto è per la US " + us, us,
-    photo_base64: base64, filename: file.name,
-    media_type: file.type || "image/jpeg",
-  }, file.name);
-});
+// L'OTTURATORE NON È PIÙ QUI: sta in `web/photos.js`, montato da `shell.js`.
+//
+// Non un riordino. Quello che c'era faceva due cose sbagliate nella stessa
+// manciata di righe, e valgono scritte perché sono la ragione di quel modulo:
+//
+//   1. INDOVINAVA L'UNITÀ. `saidBox.textContent.match(/\b(\d{1,5})\b/)` — il
+//      primo numero comparso nell'ultima frase. Su «la US 12 taglia la 7» la
+//      foto sarebbe finita sulla 12 senza che nessuno l'avesse detto.
+//   2. MANDAVA SUBITO, e se il nodo non c'era la foto finiva nella coda delle
+//      FRASI: 5,33 MB di base64 in `localStorage` per una foto da 4 MB, con un
+//      tetto misurato di 49 MB. Nove foto, e la decima butta tutto.
+//
+// Adesso: i byte vanno prima in IndexedDB (12,5 GB misurati sulla stessa
+// origine), il collegamento si propone e non si decide, e una foto che aspetta
+// si vede.
 
 // ── where ───────────────────────────────────────────────────────────────────
 $("where").addEventListener("click", () => {
