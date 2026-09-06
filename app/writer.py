@@ -29,6 +29,8 @@ the tools (which asked s3Dgraphy); this puts it somewhere and reads it back.
 from __future__ import annotations
 
 import json
+import urllib.parse
+import urllib.request
 import logging
 import os
 import threading
@@ -588,6 +590,27 @@ class RoomWriter:
         for op in ops:
             self.session.send("op", op)
             self._result_of(op)
+
+    # ── rileggere cosa ci si è detti ────────────────────────────────────────
+
+    def conversation(self) -> Dict[str, Any]:
+        """La conversazione della stanza, chiesta alla stanza.
+
+        Sta qui e non nella rotta per la ragione che `test_one_write_path`
+        esiste per far dire: **questo oggetto è già quello che parla con la
+        stanza** e già tiene il token. Una `urlopen` in `main.py` avrebbe fatto
+        del front-end un secondo interlocutore della stanza, e il cancello è
+        scattato appena l'ho scritta — che è esattamente il suo mestiere.
+
+        Non sul socket: è una LETTURA, e il socket porta operazioni. Una domanda
+        che non cambia niente non ha ragione di passare per la via che scrive.
+        """
+        url = (f"{self.base_url}/v1/rooms/"
+               f"{urllib.parse.quote(self.room_id)}/chat")
+        chiesta = urllib.request.Request(
+            url, headers={"Authorization": f"Bearer {self._token}"})
+        with urllib.request.urlopen(chiesta, timeout=self.timeout) as risposta:
+            return json.loads(risposta.read().decode("utf-8"))
 
     # ── il posto a sedere ───────────────────────────────────────────────────
 

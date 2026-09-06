@@ -35,6 +35,7 @@ import contextlib
 import logging
 import os
 import pathlib
+import time
 
 from typing import Any, Dict, List, Optional
 
@@ -52,7 +53,8 @@ from .spool import describe as larder_describe
 from .spool import shared_name, spool_from_env
 from .auth import _TOKEN_SUFFIX as TOKEN_SUFFIX
 from .auth import AuthDependency, authenticator, principal_orcid
-from .contract import ToolResult, invoke
+from .contract import GraphDelta, ToolResult, invoke, stable_id
+from . import conversazione
 from .intent import COMMAND_LANGUAGE, understand
 from .intent import describe as intent_describe
 from .intent import intent_model_from_env
@@ -1067,6 +1069,90 @@ def point_at(request: Request, body: PointAt = Body(...)) -> Dict[str, Any]:
         f"{presa['message']} Scrivo nella stanza «{dove['room']}» "
         f"su {dove['server']}, a nome tuo.")
     return stato
+
+
+class Detto(BaseModel):
+    """Una frase, e basta. Non c'è dove scrivere un autore.
+
+    L'identità la mette il relay dal token — `writer.py` non manda mai un
+    `author` e il relay lo butterebbe comunque — quindi questo modello non offre
+    la casella. Un campo che non esiste è più forte di un campo ignorato.
+    """
+
+    said: str = ""
+
+
+@v1.post("/room/chat", tags=["room"])
+def say_to_the_room(request: Request, body: Detto = Body(...)) -> Dict[str, Any]:
+    """Dì una frase alla stanza.
+
+    **Niente di nuovo sul filo**: una frase è un nodo, e lo scrivano sa già
+    mandare un nodo. Il che porta in dote la cosa che serve di più in trincea —
+    **la coda di quando non c'è rete**: se la stanza non risponde, il nodo
+    finisce nel contenitore locale e parte al ritorno, esattamente come una
+    fotografia. Una frase detta in un fosso senza campo non si perde.
+
+    L'istante è di chi parla (`writer.apply` timbra col proprio clock), perché
+    una frase detta alle dieci e sincronizzata alle diciotto porta le dieci.
+    """
+    #: SENZA UN NOME NON SI DICE NIENTE, e la frase del rifiuto è diversa da
+    #: quella di `_who`: lì si sta prendendo il nodo, qui si sta parlando. Una
+    #: riga di conversazione senza autore è peggio di una riga in meno — in una
+    #: discussione «chi l'ha detto» è metà di quello che si legge.
+    who = _author(request)
+    if not who:
+        raise HTTPException(
+            status_code=403,
+            detail="Questo nodo non chiede una firma (auth in modo dev), quindi "
+                   "una frase detta da qui non porterebbe il nome di nessuno. "
+                   "In una conversazione «chi l'ha detto» è metà di quello che "
+                   "si legge.")
+    testo = body.said.strip()
+    if not testo:
+        raise HTTPException(status_code=400, detail="non hai detto niente.")
+    #: l'id da CHI PARLA e QUANDO, non da un contatore: due nodi di campo che
+    #: parlano insieme non si sovrascrivono a vicenda
+    node_id = stable_id("chat", who, testo, str(time.time()))
+    WRITER.apply(GraphDelta(
+        nodes=[conversazione.message_node(testo, node_id=node_id)]))
+    stato = _room_state()
+    return {"ok": True, "id": node_id, "said": testo,
+            "writes_to": stato["writes_to"], "room": stato["room"],
+            "message": "Detto."}
+
+
+@v1.get("/room/chat", tags=["room"])
+def read_the_room(request: Request) -> Dict[str, Any]:
+    """Rileggi cosa ci si è detti — dalla stanza, che è l'unica che lo sa.
+
+    Non c'è una copia locale della conversazione, e la mancanza è dichiarata:
+    una copia sarebbe un secondo database, e questo nodo ne ha già uno (il
+    contenitore) che esiste per un'altra ragione. Senza rete si può **dire** e
+    non si può **rileggere**, che è la metà onesta di quello che si può
+    promettere.
+    """
+    bearer = _bearer(request)
+    server = getattr(WRITER, "base_url", None)
+    room = getattr(WRITER, "room_id", None)
+    if not server or not room:
+        raise HTTPException(
+            status_code=409,
+            detail="questo nodo scrive nel contenitore locale: non c'è una "
+                   "stanza in cui si stia parlando.")
+    #: LA DOMANDA LA FA CHI PARLA GIÀ CON LA STANZA. Scritta qui la prima volta,
+    #: `test_one_write_path` è scattato su `main.py` — ed è il suo mestiere: una
+    #: `urlopen` in questo file avrebbe fatto della porta d'ingresso un secondo
+    #: interlocutore della stanza, con un token in mano. Sta in `RoomWriter`,
+    #: che la stanza e il token ce li ha già.
+    _ = bearer
+    try:
+        letto = WRITER.conversation()
+    except Exception as chiusa:        # noqa: BLE001 — rete o porta chiusa
+        raise HTTPException(
+            status_code=502,
+            detail=f"La stanza «{room}» non ha risposto: {chiusa}") from None
+    letto["room"] = room
+    return letto
 
 
 @v1.delete("/room", tags=["room"])

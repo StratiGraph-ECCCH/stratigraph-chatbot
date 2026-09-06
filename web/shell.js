@@ -17,6 +17,7 @@ import {
 } from "./scheda.js";
 import { mount as mountPhotos } from "./photos.js";
 import { mount as mountRoom } from "./room.js";
+import { mount as mountChat } from "./chat.js";
 
 const $ = (id) => document.getElementById(id);
 const SG = () => window.SG || {};
@@ -354,6 +355,10 @@ function wireShell() {
   // che vive nella pagina e non in un modulo: la conchiglia dichiara un seam
   // sola (`window.SG`) e questa è la sua controparte nell'altro verso.
   window.SGRoom = mountRoom($("nav-room"));
+  //  IL SEAM E BASTA: la conchiglia dichiara `window.SG` e questo modulo non
+  //  conosce altro. `t` e `show` vengono da lì, come per ogni altra superficie.
+  window.SGChat = mountChat({ t: (k, v) => SG().t(k, v),
+                              toast: (m) => SG().show(true, m) });
 
   // Il modo si RIPROPONE quando la finestra cambia, ma non sovrascrive una
   // scelta: `effectiveMode` guarda prima cosa è stato scelto.

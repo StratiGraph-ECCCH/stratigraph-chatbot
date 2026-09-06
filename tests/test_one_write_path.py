@@ -25,7 +25,14 @@ APP = pathlib.Path(__file__).resolve().parent.parent / "app"
 #: in questa tabella con chi sta parlando — che è la conversazione che si vuole
 #: avere, invece di scoprirlo dopo.
 ALLOWED = {
-    "writer.py": "la STANZA e il contenitore locale — l'unica via al grafo",
+    # 2026-10-05 · un verbo in più, dichiarato: `RoomWriter.conversation()`
+    # CHIEDE alla stanza cosa ci si è detti. È una lettura, non una via al
+    # grafo, e sta qui per la ragione per cui questa tabella esiste: scritta la
+    # prima volta in `main.py`, il cancello è scattato — una `urlopen` nella
+    # porta d'ingresso avrebbe fatto del front-end un secondo interlocutore
+    # della stanza, con un token in mano.
+    "writer.py": "la STANZA (scrive sul socket, e le chiede la conversazione) "
+                 "e il contenitore locale — l'unica via al grafo",
     # 2026-09-26 · IL CANCELLO È SCATTATO, e la conversazione che voleva avere è
     # questa: `session.py` NON è una seconda via di scrittura. È il socket che
     # `writer.py` usava già, estratto e **tenuto aperto** invece di essere aperto

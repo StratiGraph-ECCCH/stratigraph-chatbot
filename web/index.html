@@ -133,7 +133,22 @@
       <div class="row">
         <button id="shoot">📷 Photo</button>
         <button id="where">📍 Where am I</button>
+        <!-- DIETRO UN TOCCO: leggere cosa si sono detti gli altri è una cosa
+             che si fa quando ci si ferma, non tutto il giorno. -->
+        <button id="chat-open" aria-expanded="false"
+                aria-controls="chat">💬 What we said</button>
       </div>
+      <!-- LA CONVERSAZIONE. Vive nella STANZA e non qui: senza rete si può
+           dire e non si può rileggere, e il pannello lo dice invece di
+           sembrare vuoto. -->
+      <section id="chat" class="chat" hidden>
+        <div id="chat-lines" class="chat-lines"></div>
+        <div class="row">
+          <input type="text" id="chat-say" enterkeyhint="send">
+          <button id="chat-send">Say</button>
+        </div>
+        <p class="hint" id="chat-note"></p>
+      </section>
       <!-- LE FOTO CHE ASPETTANO. Una foto scattata e non ancora collegata è
            uno stato legittimo del lavoro — E.D. dice «faccio delle foto, LE
            collego», al plurale e dopo — quindi si vede e si nomina invece di
@@ -252,6 +267,19 @@ const STRINGS = {
     "photos.other": "other number",
     "photos.ask": "Which unit is this photo of?",
     "photos.nokeep": "I could not keep the photo on this device: it was NOT taken.",
+    "chat.open": "💬 What we said",
+    "chat.say": "Say",
+    "chat.placeholder": "say it to the room",
+    "chat.send": "Say",
+    "chat.none": "Nothing has been said in this room yet.",
+    "chat.nobody": "no name",
+    "chat.retracted": "— retracted —",
+    "chat.more": "{n} earlier messages are not shown.",
+    "chat.boundary": "A conversation stays in the room: none of it travels in a published study.",
+    "chat.signin": "Sign in to read what was said.",
+    "chat.nolocal": "This node writes into the local container: there is no room where anybody is talking.",
+    "chat.unreachable": "The room did not answer. Without a network you can say something — it queues — but you cannot read back.",
+    "chat.queued": "Said. The room did not answer, so it is queued and leaves on the way back.",
     "room.local": "local container",
     "room.in": "room {room}",
     "room.in.held": "room {room} · held",
@@ -320,6 +348,19 @@ const STRINGS = {
     "photos.other": "altro numero",
     "photos.ask": "Di che unità è questa foto?",
     "photos.nokeep": "Non sono riuscito a tenere la foto su questo dispositivo: NON è stata scattata.",
+    "chat.open": "💬 Cosa ci siamo detti",
+    "chat.say": "Dì",
+    "chat.placeholder": "dillo alla stanza",
+    "chat.send": "Dì",
+    "chat.none": "In questa stanza non si è ancora detto niente.",
+    "chat.nobody": "senza nome",
+    "chat.retracted": "— ritrattato —",
+    "chat.more": "{n} messaggi più vecchi non sono mostrati.",
+    "chat.boundary": "Una conversazione resta nella stanza: niente di questo viaggia in uno studio pubblicato.",
+    "chat.signin": "Firma per leggere cosa ci si è detti.",
+    "chat.nolocal": "Questo nodo scrive nel contenitore locale: non c'è una stanza in cui si stia parlando.",
+    "chat.unreachable": "La stanza non ha risposto. Senza rete si può dire — va in coda — ma non si può rileggere.",
+    "chat.queued": "Detto. La stanza non ha risposto, quindi è in coda e parte al ritorno.",
     "room.local": "container locale",
     "room.in": "stanza {room}",
     "room.in.held": "stanza {room} · tenuto",
@@ -564,6 +605,10 @@ function paintStrings() {
   set("rec", t("action.record"));
   set("shoot", t("action.shoot"));
   set("where", t("action.where"));
+  set("chat-open", t("chat.open"));
+  set("chat-send", t("chat.send"));
+  const dillo = $("chat-say");
+  if (dillo) dillo.placeholder = t("chat.placeholder");
   set("send", t("action.send"));
   set("hint", recognitionHint());
   document.title = "StratiGraph · " + t("app.subtitle");

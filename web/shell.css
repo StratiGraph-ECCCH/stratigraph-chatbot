@@ -285,3 +285,51 @@
     text-decoration: underline;
   }
 
+
+/* ── cosa ci siamo detti ────────────────────────────────────────────────────
+ *
+ * Zero colori letterali: tutto dalle variabili del tema, come il resto della
+ * conchiglia. E niente altezze fisse — su un telefono a 375 px la colonna e' la
+ * larghezza, e una riga di conversazione va a capo invece di far scorrere la
+ * pagina di lato. */
+.chat {
+  margin: 0.5rem 0;
+  padding: 0.5rem;
+  border: 1px solid var(--sg-line);
+  border-radius: var(--sg-radius);
+  background: var(--sg-surface);
+}
+.chat-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.chat-line {
+  display: grid;
+  grid-template-columns: minmax(0, auto) 1fr minmax(0, auto);
+  gap: 0.4rem;
+  align-items: baseline;
+  font-size: 0.9rem;
+}
+.chat-who { color: var(--sg-muted); font-variant-numeric: tabular-nums; }
+.chat-said { min-width: 0; overflow-wrap: anywhere; }
+.chat-at { color: var(--sg-muted); font-size: 0.8rem; }
+/* Un messaggio ritrattato RESTA e lo dice: sparire in silenzio lascerebbe un
+ * buco che sembra un errore di lettura. */
+.chat-gone .chat-said { color: var(--sg-muted); font-style: italic; }
+/* La casella prende quello che resta e il bottone quello che gli serve: nel
+ * resto della conchiglia i bottoni sono grandi perché si toccano coi guanti,
+ * ma qui il gesto è SCRIVERE e il bottone è solo la conferma. */
+.chat .row { align-items: stretch; }
+.chat #chat-say { flex: 1 1 auto; width: auto; min-width: 0; margin-bottom: 0; }
+.chat #chat-send { flex: 0 0 auto; width: auto; text-align: center;
+                   padding-left: var(--sg-space-4); padding-right: var(--sg-space-4); }
+
+@media (max-width: 26rem) {
+  /* A 375 px il nome di chi parla va sopra la frase: tre colonne diventano
+   * illeggibili prima di diventare strette. */
+  .chat-line { grid-template-columns: 1fr minmax(0, auto); }
+  .chat-who { grid-column: 1 / -1; }
+}
