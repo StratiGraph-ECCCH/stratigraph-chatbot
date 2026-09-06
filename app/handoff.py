@@ -210,6 +210,114 @@ def sign_in(server: str, *, open_browser: Optional[Callable[[str], Any]] = None,
     return token
 
 
+# ── il token della stanza, quando la firma è di chi chiama ──────────────────
+
+class NoCredential(RuntimeError):
+    """Il nodo non ha come entrare in quella stanza, e la frase dice cosa manca.
+
+    Sua e non un `HandoffError`: il link era buono. È la credenziale che non c'è,
+    e le due cose si riparano in posti diversi — una nel link, l'altra nel realm.
+    """
+
+
+#: Le variabili dello scambio, e sono TRE perché tre sono le cose che il realm
+#: deve sapere: per chi è il token nuovo, chi lo chiede, e con che prova.
+#: Nessuna è una credenziale di una persona: sono configurazione del
+#: dispiegamento, come l'issuer.
+EXCHANGE_KEYS = ("EM_ROOM_AUDIENCE", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET")
+
+
+def exchange_missing(env: Optional[Dict[str, str]] = None) -> list:
+    """Quali delle tre mancano. Vuota vuol dire che lo scambio si può fare."""
+    import os
+    source = env if env is not None else os.environ
+    return [name for name in EXCHANGE_KEYS
+            if not (source.get(name) or "").strip()]
+
+
+def exchange(bearer: str, *, token_endpoint: str,
+             env: Optional[Dict[str, str]] = None,
+             timeout: float = 15.0) -> str:
+    """Scambia il token di chi chiama con uno buono per la stanza (RFC 8693).
+
+    ════════════════════════════════════════════════════════════════════════════
+    ## PERCHÉ UNO SCAMBIO E NON UN INOLTRO
+
+    Il token che una persona presenta a questo nodo è stato coniato **per questo
+    nodo** (`aud: em-chatbot`). Passarlo pari pari al relay sarebbe chiedere a un
+    terzo di accettare una prova che non era per lui: se la accettasse, questo
+    servizio potrebbe usare il token dei suoi utenti ovunque — il *confused
+    deputy* nella sua forma da manuale.
+
+    Lo scambio è la risposta che OAuth dà a quella domanda: il nodo si presenta
+    con **la propria** identità di client e chiede al realm un token *per il
+    relay*, che vale **come la persona che ha firmato qui**. È il realm a
+    decidere se questo nodo può farlo, ed è la decisione giusta da mettere lì.
+
+    Il `client_secret` è una credenziale **del dispiegamento**, non di una
+    persona, e non viene mai né stampato né scritto: si legge dall'ambiente e va
+    nel corpo di una `POST`.
+
+    ## E SE IL REALM NON È CONFIGURATO
+
+    Si alza `NoCredential` con dentro **cosa manca**, e il nodo non ripiega su
+    niente. Il ripiego che verrebbe in mente — usare il token del nodo preso
+    dall'ambiente — attribuirebbe il lavoro di una persona al dispiegamento, che
+    è esattamente il difetto che questa notte esiste per togliere.
+    """
+    import json
+    import os
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    source = dict(env if env is not None else os.environ)
+    mancano = exchange_missing(source)
+    if mancano:
+        raise NoCredential(
+            "questo nodo non può chiedere al realm un token per la stanza: "
+            f"manca {', '.join(mancano)}. Sono configurazione del nodo (non "
+            "una password di nessuno) e vanno messe dove stanno OIDC_ISSUER e "
+            "OIDC_AUDIENCE.")
+
+    body = urllib.parse.urlencode({
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "subject_token": bearer,
+        "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "audience": source["EM_ROOM_AUDIENCE"].strip(),
+        "client_id": source["OIDC_CLIENT_ID"].strip(),
+        "client_secret": source["OIDC_CLIENT_SECRET"].strip(),
+    }).encode()
+    request = urllib.request.Request(
+        token_endpoint, data=body, method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as answer:
+            payload = json.loads(answer.read() or b"{}")
+    except urllib.error.HTTPError as problem:
+        detail = ""
+        try:
+            detail = json.loads(problem.read() or b"{}").get(
+                "error_description") or ""
+        except Exception:                             # noqa: BLE001
+            pass
+        raise NoCredential(
+            f"il realm ha rifiutato lo scambio ({problem.code}"
+            f"{': ' + detail if detail else ''}). Di solito vuol dire che a "
+            f"questo client non è consentito lo scambio verso "
+            f"«{source['EM_ROOM_AUDIENCE']}»: si abilita nel realm, non qui."
+        ) from None
+    except (urllib.error.URLError, OSError, ValueError) as problem:
+        raise NoCredential(
+            f"il realm non ha risposto ({problem}): senza di lui questo nodo "
+            f"non ha come presentarsi alla stanza.") from None
+    token = str(payload.get("access_token") or "")
+    if not token:
+        raise NoCredential("lo scambio non ha restituito un token")
+    return token
+
+
 def writer_from_link(link: str, *, fallback: Any = None,
                      sign_in_with: Optional[Callable[[str], Optional[str]]] = None):
     """A link in, a configured `RoomWriter` out. The whole point of the contract.

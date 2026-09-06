@@ -291,11 +291,99 @@ class Bridge:
         temporaneo.replace(self.path)
 
 
-def bridge_for(container_path: str) -> Bridge:
-    """La coda che accompagna un container locale.
+def room_key(room_id: str) -> str:
+    """Il nome di una stanza, in una forma che sta in un nome di file.
+
+    Non un `slugify` e basta: due stanze diverse possono ridursi allo stesso
+    slug (`saggio/B` e `saggio-B`), e due code che si confondono sono il
+    difetto che questa funzione esiste per rendere impossibile. Quindi lo slug
+    **più** otto caratteri di digest della stringa vera — leggibile per una
+    persona, univoco per il disco.
+    """
+    import hashlib
+
+    grezzo = str(room_id or "").strip()
+    leggibile = "".join(c if (c.isalnum() or c in "._-") else "-"
+                        for c in grezzo)[:48].strip("-") or "stanza"
+    return f"{leggibile}.{hashlib.sha256(grezzo.encode()).hexdigest()[:8]}"
+
+
+def bridge_for(container_path: str, room: Optional[str] = None) -> Bridge:
+    """La coda che accompagna un container locale, **per stanza**.
 
     Accanto e non dentro: il container è un `em.json` che l'ecosistema intero
     sa leggere, e infilarci una coda di operazioni ne farebbe un formato nostro.
+
+    ════════════════════════════════════════════════════════════════════════════
+    ## PERCHÉ PER STANZA, DAL 2 OTTOBRE
+
+    Fino a stanotte la coda era **una sola per nodo**, e apparteneva al nodo e
+    non alla destinazione. Misurato prima di cambiare niente, con due scrivani
+    puntati a due stanze diverse sullo stesso container:
+
+        scrivano A → stanza-A · coda scavo.em.json.pending.jsonl
+        scrivano B → stanza-B · coda scavo.em.json.pending.jsonl
+        STESSO FILE: True
+
+    e l'operazione in coda **non nomina la stanza per cui è stata scritta**:
+
+        {'op': 'add_node', 'id': 'US1', 'ts': '2026-09-06T07:57:09Z'}
+        campi: ['id', 'node', 'op', 'ts']
+
+    Quindi da stanotte, con una rotta che ripunta il nodo, quelle operazioni
+    sarebbero finite nella stanza sbagliata **senza che niente potesse
+    accorgersene**: sono valide, il relay le accetta, e comparirebbero in un
+    grafo che non è quello per cui erano state dettate. *Cambiare destinazione a
+    un lavoro già accodato non è ripuntare, è perderlo con un'altra faccia.*
+
+    Le altre due strade che il prompt ammetteva sono state scartate con lo stesso
+    argomento: **consegnare prima di ripuntare** e **rifiutare finché la coda non
+    è vuota** vogliono tutte e due che la stanza vecchia sia raggiungibile — e la
+    coda esiste precisamente perché non lo è. Un nodo puntato a una stanza morta
+    non si potrebbe più ripuntare, che è il blocco peggiore del problema che
+    risolvono.
+
+    Con una coda per stanza, invece, ripuntare non tocca niente: la coda di A
+    resta di A, si vede in `/health`, e riparte quando il nodo torna su A.
+
+    ## IL FILE CHE C'ERA GIÀ
+
+    Un nodo che gira da ieri ha `…em.json.pending.jsonl` e magari del lavoro
+    dentro. Quando gli si chiede la coda di una stanza e quella stanza non ha
+    ancora un file suo, **la vecchia viene adottata** con un `replace` atomico.
+    Il lavoro di quel nodo era per quella stanza — è l'unica che avesse — e
+    lasciarlo in un file che nessuno guarda più sarebbe la perdita del 27
+    settembre ripetuta da capo.
     """
     base = pathlib.Path(container_path)
-    return Bridge(str(base.with_suffix(base.suffix + ".pending.jsonl")))
+    legacy = base.with_suffix(base.suffix + ".pending.jsonl")
+    if not room:
+        return Bridge(str(legacy))
+    mia = base.with_suffix(base.suffix + f".{room_key(room)}.pending.jsonl")
+    if legacy.is_file() and not mia.is_file():
+        try:
+            legacy.replace(mia)
+            log.info("coda: adottata %s per la stanza %s", legacy.name, room)
+        except OSError as exc:        # sola lettura, permessi: si dice e basta
+            log.warning("coda: %s non si è potuta adottare: %s", legacy.name, exc)
+    return Bridge(str(mia))
+
+
+def queues_beside(container_path: str) -> List[Dict[str, Any]]:
+    """Tutte le code che questo nodo ha sul disco, con quanto c'è dentro.
+
+    Serve perché una coda per stanza introduce un modo nuovo di perdere del
+    lavoro: **ripuntare via da una stanza e dimenticarsene**. Una coda che
+    nessuno guarda più è la stessa palude di prima con un nome più preciso, e
+    l'unica difesa è che si veda in `/health`.
+    """
+    base = pathlib.Path(container_path)
+    radice = base.parent
+    if not radice.is_dir():
+        return []
+    fuori: List[Dict[str, Any]] = []
+    for path in sorted(radice.glob(base.name + "*.pending.jsonl")):
+        quante = len(Bridge(str(path)))
+        if quante:
+            fuori.append({"queue": path.name, "pending": quante})
+    return fuori

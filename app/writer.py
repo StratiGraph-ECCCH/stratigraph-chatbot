@@ -999,7 +999,8 @@ class RoomWriter:
 
 
 def writer_from_env(environ: Optional[Dict[str, str]] = None, *,
-                    spool: Optional[Spool] = None) -> GraphWriter:
+                    spool: Optional[Spool] = None,
+                    local: Optional["LocalWriter"] = None) -> GraphWriter:
     """A room when the node names one, the local container otherwise.
 
     Never silent in either direction: `/health` says which is answering, because
@@ -1016,9 +1017,16 @@ def writer_from_env(environ: Optional[Dict[str, str]] = None, *,
     # `main.py`, e i test).
     if spool is None:
         spool = spool_from_env(env)
-    local = LocalWriter(env.get("EM_CHATBOT_CONTAINER")
-                        or "data/scavo.em.json",
-                        study=env.get("EM_CHATBOT_STUDY") or "Scavo")
+    # IL CONTAINER LOCALE È UNO SOLO, e dal 2 ottobre si può passare: la rotta
+    # che ripunta il nodo costruisce uno scrivano nuovo e deve dargli **lo
+    # stesso** container, non un secondo oggetto sullo stesso file. Due
+    # `LocalWriter` sullo stesso `em.json` sono due lettori-scrittori senza un
+    # lucchetto fra loro, che è il difetto che `bridge.py` ha già pagato una
+    # volta.
+    if local is None:
+        local = LocalWriter(env.get("EM_CHATBOT_CONTAINER")
+                            or "data/scavo.em.json",
+                            study=env.get("EM_CHATBOT_STUDY") or "Scavo")
 
     # A HANDOFF LINK is the way in now (`app/handoff.py`): one string, no
     # credential, and the node signs in for itself. It wins over the split
@@ -1044,7 +1052,8 @@ def writer_from_env(environ: Optional[Dict[str, str]] = None, *,
                 "sign-in (it follows the link and gets one), or set "
                 "EM_CHATBOT_TOKEN for a headless node.")
         return RoomWriter(where["server"], where["room"], token, fallback=local,
-                          bridge=bridge_for(local.path), spool=spool)
+                          bridge=bridge_for(local.path, where["room"]),
+                          spool=spool)
 
     base = (env.get("EM_SERVER_URL") or "").strip()
     room = (env.get("EM_CHATBOT_ROOM") or "").strip()
@@ -1059,7 +1068,7 @@ def writer_from_env(environ: Optional[Dict[str, str]] = None, *,
         # un nodo di cui si salva il volume si porta dietro sia la copia sia
         # quello che deve ancora partire.
         return RoomWriter(base, room, token, fallback=local,
-                          bridge=bridge_for(local.path), spool=spool)
+                          bridge=bridge_for(local.path, room), spool=spool)
     return local
 
 

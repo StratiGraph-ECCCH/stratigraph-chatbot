@@ -30,11 +30,12 @@ question anybody asks, and it deserves an answer that is one GET away.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import logging
+import os
 import pathlib
 
-import base64
 from typing import Any, Dict, List, Optional
 
 from fastapi import (APIRouter, Body, FastAPI, File, Form, HTTPException,
@@ -42,10 +43,14 @@ from fastapi import (APIRouter, Body, FastAPI, File, Form, HTTPException,
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
-from . import assets
+from . import assets, handoff
 from .assets import describe as asset_describe
+from .bridge import bridge_for, queues_beside
+from .holding import HeldByAnother, Holding
+from .holding import describe as holding_describe
 from .spool import describe as larder_describe
 from .spool import shared_name, spool_from_env
+from .auth import _TOKEN_SUFFIX as TOKEN_SUFFIX
 from .auth import AuthDependency, authenticator, principal_orcid
 from .contract import ToolResult, invoke
 from .intent import COMMAND_LANGUAGE, understand
@@ -54,6 +59,7 @@ from .intent import intent_model_from_env
 from .speech import describe as stt_describe
 from .speech import stt_from_env
 from .tools import build_registry
+from .writer import LocalWriter, RoomWriter
 from .writer import describe as writer_describe
 from .writer import writer_from_env
 
@@ -143,7 +149,19 @@ app = FastAPI(
 #: quello che ne ha più bisogno. La prima versione la prendeva dal writer e
 #: `/health` diceva «nessuna» con la variabile impostata.
 LARDER = spool_from_env()
-WRITER = writer_from_env(spool=LARDER)
+
+#: IL CONTAINER LOCALE, costruito qui e passato: dal 2 ottobre lo scrivano si
+#: può sostituire a caldo (`POST /v1/room`), e ogni scrivano nuovo deve ricevere
+#: **questo** container e non costruirsene un secondo sullo stesso file.
+LOCAL = LocalWriter(os.environ.get("EM_CHATBOT_CONTAINER")
+                    or "data/scavo.em.json",
+                    study=os.environ.get("EM_CHATBOT_STUDY") or "Scavo")
+WRITER = writer_from_env(spool=LARDER, local=LOCAL)
+
+#: CHI TIENE IL NODO. Vuota all'avvio anche quando l'ambiente punta già a una
+#: stanza: un nodo configurato dal dispiegamento non è «in mano» a nessuno, e
+#: dichiararlo tenuto impedirebbe alla prima persona che arriva di prenderlo.
+HOLDING = Holding()
 STT = stt_from_env()
 
 #: LO STORE CHE I TOOL VEDONO. Se questo nodo ha una dispensa è quella, e non
@@ -199,6 +217,22 @@ class Health(BaseModel):
     #: configurazione — su un nodo di campo vuol dire che una foto scattata
     #: senza rete si perde — e non un dettaglio.
     larder: str = "nessuna (i byte vanno diritti allo store: senza rete si perdono)"
+    #: SE IL NODO È IN MANO A QUALCUNO, e da quanto è fermo. **Senza il nome**:
+    #: `/health` è pubblica, e «chi sta lavorando in questa tenda adesso» non si
+    #: dà a chi non si è nemmeno presentato. Il nome lo legge chi ha firmato, su
+    #: `GET /v1/room` — e chi prova a prendere un nodo occupato lo trova nel
+    #: rifiuto, che è il posto in cui serve.
+    held: str = "libero"
+    #: LE CODE CHE QUESTO NODO HA SUL DISCO, una per stanza, con quanto c'è
+    #: dentro. Da quando le code sono per stanza esiste un modo nuovo di perdere
+    #: del lavoro — ripuntare via da una stanza e dimenticarsene — e l'unica
+    #: difesa è che si veda.
+    queues: List[Dict[str, Any]] = Field(default_factory=list)
+    #: IL SERVER CHE QUESTO NODO USEREBBE, se chi punta dice solo una stanza.
+    #: Un indirizzo non è un permesso — è la stessa cosa che il link di consegna
+    #: porta in chiaro — e senza, la pagina dovrebbe chiedere di scrivere due
+    #: campi per fare una cosa sola.
+    server_hint: str = ""
     speech: str = "passthrough"
     #: Kept, and DERIVED from the line below: a probe that only ever asked
     #: "is there one?" must not break the day the answer got longer.
@@ -332,6 +366,10 @@ def _health() -> Health:
         asset_store=(asset_describe(assets.ASSET_STORE) if LARDER is None
                      else shared_name()),
         larder=larder_describe(LARDER),
+        held=holding_describe(HOLDING),
+        queues=queues_beside(LOCAL.path),
+        server_hint=(getattr(WRITER, "base_url", "")
+                     or (os.environ.get("EM_SERVER_URL") or "").strip()),
         speech=stt_describe(STT),
         intent_model=INTENT_MODEL is not None,
         intent=intent_describe(INTENT_MODEL),
@@ -562,7 +600,15 @@ def _author(request: Request) -> Optional[str]:
     principal = authenticator.require_token(request)
     if principal.get("em_dev_mode"):
         return None
-    return principal_orcid(principal)
+    orcid = principal_orcid(principal)
+    # ...e OGNI ATTO AUTENTICATO RINFRESCA LA PRESA. È il lavoro che tiene il
+    # nodo, non una dichiarazione: un nodo tenuto per aver detto una volta «e'
+    # mio» tornerebbe a essere un blocco. Qui e non altrove perché questa
+    # funzione È «un atto autenticato di questa persona» — la chiamano le
+    # cinque rotte che scrivono, e nessun'altra.
+    if orcid:
+        HOLDING.touch(orcid)
+    return orcid
 
 
 def _run(transcript: str, slots: Dict[str, Any], author: Optional[str]) -> Answer:
@@ -766,6 +812,294 @@ def photo(request: Request, body: PhotoBody = Body(...)) -> Answer:
                 _author(request))
 
 
+
+
+def _room_credential(bearer: str, server: str) -> tuple:
+    """Il token con cui questo nodo entrera' nella stanza, e da dove viene.
+
+    ════════════════════════════════════════════════════════════════════════════
+    ## PERCHÉ NON SI INOLTRA IL TOKEN DI CHI CHIAMA
+
+    È la strada che verrebbe in mente per prima e **non si fa**, e la ragione e'
+    un attacco concreto, non un principio: il server della stanza lo sceglie il
+    LINK, e un link lo può scrivere chiunque. «Incolla questo» con dentro
+    `server=https://qualcosa.esempio` e questo nodo consegnerebbe il token della
+    persona che ha firmato a chi ha scritto il link.
+
+    Uno scambio non ha quella forma: il realm conia un token **per un pubblico
+    che conosce lui** (`EM_ROOM_AUDIENCE`), e un link che nomina un altro server
+    ottiene un token che a quel server non serve.
+
+    Due strade, in quest'ordine, e ognuna dice cosa comporta:
+
+    1. **lo scambio al realm** — il lavoro nella stanza è di chi ha firmato qui.
+       È la strada giusta e ha bisogno di tre variabili di configurazione
+       (`handoff.EXCHANGE_KEYS`), che sono del nodo e non di una persona.
+    2. **il token dell'ambiente** — c'è già, su un nodo configurato headless, e
+       funziona. Ma nella stanza il lavoro risulterà **di chi ha configurato il
+       nodo**, perché il relay prende l'identità dal token e non dal payload.
+       Si usa e **si dichiara nella risposta**: è il comportamento che questo
+       nodo ha sempre avuto, e stanotte smette di essere taciuto.
+
+    Senza nessuna delle due si alza `NoCredential` con dentro cosa manca. Non si
+    ripiega su niente: un nodo che scrivesse «a nome tuo» con un token altrui
+    direbbe una cosa falsa in un grafo che qualcuno dovra' difendere.
+    """
+    if not handoff.exchange_missing():
+        # DERIVATO DALL'ISSUER, come fa `auth.py` nella direzione opposta: una
+        # variabile sola configura tutte e due e non possono contraddirsi. Se
+        # questo nodo non ha un issuer si chiede al server della stanza, che e'
+        # l'unico altro posto che lo sa.
+        issuer = (authenticator.settings.issuer or "").rstrip("/")
+        endpoint = (issuer + TOKEN_SUFFIX) if issuer else (
+            (handoff.auth_config(server) or {}).get("token_endpoint"))
+        if not endpoint:
+            raise handoff.NoCredential(
+                "lo scambio è configurato ma non so a quale token endpoint "
+                "chiederlo: manca OIDC_ISSUER (o TOKEN_ENDPOINT) su questo nodo.")
+        return handoff.exchange(bearer, token_endpoint=endpoint), (
+            "scambiato al realm: nella stanza il lavoro è tuo")
+
+    dellambiente = (os.environ.get("EM_CHATBOT_TOKEN") or "").strip()
+    if dellambiente:
+        return dellambiente, (
+            f"il token dell'ambiente: nella stanza il lavoro risulterà di "
+            f"{_token_orcid(dellambiente) or 'chi ha configurato questo nodo'}, "
+            f"non tuo. Per scrivere a nome tuo servono "
+            f"{', '.join(handoff.exchange_missing())}.")
+
+    raise handoff.NoCredential(
+        "questo nodo non ha come presentarsi a una stanza. Due strade: "
+        f"configurare lo scambio al realm ({', '.join(handoff.EXCHANGE_KEYS)}), "
+        "che fa risultare il lavoro di chi firma; oppure dargli un "
+        "EM_CHATBOT_TOKEN, che lo fa risultare del dispiegamento.")
+
+
+def _token_orcid(token: str) -> Optional[str]:
+    """L'ORCID dichiarato da un token, **senza verificarlo**.
+
+    Solo per una frase, e la frase dice di chi risulterà il lavoro. Non è una
+    decisione di fiducia — a verificare ci pensa il relay — ed è il token di
+    questo nodo, non di uno sconosciuto.
+    """
+    import json
+    try:
+        corpo = token.split(".")[1]
+        corpo += "=" * (-len(corpo) % 4)
+        return json.loads(base64.urlsafe_b64decode(corpo)).get("orcid")
+    except Exception:                              # noqa: BLE001
+        return None
+
+
+
+# ── la porta si apre da dentro ────────────────────────────────────────────────
+#
+# LA META' CHE MANCAVA. `handoff.writer_from_link` esisteva dal 14 agosto e non
+# la chiamava nessuno: il nodo si puntava a una stanza **solo** all'avvio,
+# dall'ambiente, e una persona che apriva l'assistente e firmava non poteva
+# dirgli dove scrivere. La firma diceva CHI parla e non DOVE arriva.
+#
+# E la regola del docstring di `writer_from_env` resta, parola per parola:
+# *«opening a browser as a side effect of a module load is the kind of thing
+# that hangs a service at boot»*. Qui non si carica un modulo — qui c'è una
+# persona che ha appena premuto un bottone, che è esattamente il posto che
+# quella riga indicava.
+
+class PointAt(BaseModel):
+    """Dove il nodo deve scrivere. Un link, oppure le due cose che ci sono
+    dentro — perché un tablet in tenda non sempre ha da dove incollare."""
+
+    link: str = ""
+    server: str = ""
+    room: str = ""
+
+
+def _bearer(request: Request) -> str:
+    """La firma di chi chiama, cruda.
+
+    Serve per una cosa sola: chiedere al realm un token PER LA STANZA a nome di
+    questa persona (`handoff.exchange`). Non viene mai scritta, mai registrata,
+    e non finisce in nessun ambiente di processo — vedi `_repoint`.
+    """
+    raw = request.headers.get("authorization") or ""
+    return raw.split(" ", 1)[1].strip() if raw.lower().startswith("bearer ") else ""
+
+
+def _who(request: Request) -> str:
+    """Chi chiede di prendere il nodo, o un rifiuto.
+
+    Un nodo non si prende senza identità: quello che si scrive da qui, nella
+    stanza, portera' il nome di chi lo tiene, e un nodo tenuto da nessuno
+    scriverebbe a nome di nessuno.
+    """
+    orcid = _author(request)
+    if not orcid:
+        raise HTTPException(
+            status_code=403,
+            detail="Questo nodo non chiede una firma (auth in modo dev), quindi "
+                   "non sa a nome di chi lo prenderesti. Nella stanza tutto "
+                   "quello che si scrive da qui porta il nome di chi tiene il "
+                   "nodo: senza un nome, non si punta a niente.")
+    return orcid
+
+
+def _swap(new_writer) -> None:
+    """Metti lo scrivano nuovo al posto di quello vecchio, e chiudi il vecchio.
+
+    Tre righe, e sono le stesse tre dell'avvio: il registro LEGA lo scrivano ai
+    dieci descrittori al momento in cui li costruisce, quindi ripuntare il nodo
+    vuol dire ricostruire il registro. Non è una furbizia — è la stessa
+    riga 158 di questo file, chiamata una seconda volta.
+
+    Una richiesta già in volo tiene il riferimento vecchio e finisce dove era
+    diretta. È la cosa giusta: una scheda a meta' non cambia stanza sotto le
+    mani di chi la sta salvando.
+    """
+    global WRITER, REGISTRY
+    vecchio = WRITER
+    WRITER = new_writer
+    REGISTRY = build_registry(new_writer, STORE)
+    leave = getattr(vecchio, "close", None)
+    if leave is not None and vecchio is not new_writer:
+        try:
+            leave()                    # alzarsi dalla stanza di prima
+        except Exception:              # noqa: BLE001
+            pass
+
+
+def _room_state(*, reveal: bool = False) -> Dict[str, Any]:
+    """Dove scrive il nodo, chi lo tiene, e cosa è rimasto indietro."""
+    stato: Dict[str, Any] = {
+        "writes_to": writer_describe(WRITER),
+        "room": getattr(WRITER, "room_id", None),
+        "server": getattr(WRITER, "base_url", None),
+        "holding": HOLDING.describe(reveal=reveal),
+        "queues": queues_beside(LOCAL.path),
+    }
+    return stato
+
+
+@v1.get("/room", tags=["room"])
+def room_state(request: Request) -> Dict[str, Any]:
+    """In quale stanza scrive questo nodo, e chi lo tiene.
+
+    Sotto `/v1` e non in `/health` perché **il nome di chi tiene il nodo lo
+    vede chi ha firmato**. `/health` è pubblica — la serve un nodo che chiunque
+    sulla stessa rete interroga — e «chi sta lavorando in questa tenda adesso»
+    non è una cosa da dare a chi non si è presentato. Il FATTO (tenuto,
+    libero) sta anche li'; il nome sta qui.
+    """
+    _author(request)                   # firma valida, o 401 dall'autenticatore
+    return _room_state(reveal=True)
+
+
+@v1.post("/room", tags=["room"])
+def point_at(request: Request, body: PointAt = Body(...)) -> Dict[str, Any]:
+    """Punta questo nodo a una stanza, a nome di chi chiama.
+
+    ## L'ORDINE DEI QUATTRO PASSI, e perché è questo
+
+    1. **la presa**, prima di tutto. È l'esclusione: due persone che puntano lo
+       stesso nodo insieme sono il difetto, non una corsa da arbitrare dopo.
+    2. **la credenziale**, poi. Il token della stanza si chiede al realm A NOME
+       di chi ha firmato qui (`handoff.exchange`), e mai si inoltra il suo pari
+       pari: un token coniato per questo nodo, presentato altrove, è il
+       *confused deputy* da manuale.
+    3. **la porta**, e si prova PRIMA di scambiare lo scrivano. Ripuntare un
+       nodo a una stanza che non risponde lo lascerebbe fermo in un posto dove
+       non può scrivere — e la frase del relay («questa stanza è in sola
+       lettura per te») è precisamente quello che chi chiede deve leggere.
+    4. **lo scambio**, per ultimo, quando tutto il resto è andato.
+
+    Se il passo 2 o il 3 falliscono e la presa è stata presa adesso, **si
+    lascia**: aver preso un nodo e non averne ottenuto niente non è tenerlo.
+    """
+    who = _who(request)
+    try:
+        dove = (handoff.parse(body.link) if body.link.strip()
+                else {"server": body.server.strip().rstrip("/"),
+                      "room": body.room.strip()})
+    except handoff.HandoffError as storto:
+        raise HTTPException(status_code=400, detail=str(storto)) from None
+    if not dove.get("server") or not dove.get("room"):
+        raise HTTPException(
+            status_code=400,
+            detail="serve un link di consegna, oppure un server e una stanza.")
+
+    gia_mio = HOLDING.holder() is not None and HOLDING.holder().who == who
+    try:
+        presa = HOLDING.take(who, server=dove["server"], room=dove["room"])
+    except HeldByAnother as altro:
+        raise HTTPException(status_code=409, detail=str(altro)) from None
+    except ValueError as vuoto:
+        raise HTTPException(status_code=403, detail=str(vuoto)) from None
+
+    def lascia_se_serve():
+        if not gia_mio:
+            HOLDING.release(who)
+
+    # ── 2 e 3, insieme: si prova la porta con il token che si è ottenuto ────
+    bearer = _bearer(request)
+    try:
+        token, come = _room_credential(bearer, dove["server"])
+    except handoff.NoCredential as manca:
+        lascia_se_serve()
+        raise HTTPException(status_code=503, detail=str(manca)) from None
+
+    candidato = RoomWriter(dove["server"], dove["room"], token,
+                           fallback=LOCAL, spool=LARDER,
+                           bridge=bridge_for(LOCAL.path, dove["room"]))
+    try:
+        candidato._seated()
+    except Exception as chiusa:        # noqa: BLE001 — porta chiusa o rete
+        lascia_se_serve()
+        raise HTTPException(
+            status_code=502,
+            detail=f"La stanza «{dove['room']}» non si è aperta: {chiusa}. "
+                   f"Il nodo scrive ancora dove scriveva prima.") from None
+
+    _swap(candidato)
+    HOLDING.pointed_at(server=dove["server"], room=dove["room"])
+    stato = _room_state(reveal=True)
+    stato["ok"] = True
+    stato["credential"] = come
+    stato["message"] = (
+        f"{presa['message']} Scrivo nella stanza «{dove['room']}» "
+        f"su {dove['server']}, a nome tuo.")
+    return stato
+
+
+@v1.delete("/room", tags=["room"])
+def unpoint(request: Request) -> Dict[str, Any]:
+    """Torna al container locale, e lascia il nodo.
+
+    Il ritorno indietro esiste perché esiste l'andata: un nodo che si può
+    puntare e non spuntare è un nodo che resta dell'ultima persona che l'ha
+    toccato finché qualcuno non lo riavvia.
+
+    Il lavoro **non si perde**: la coda della stanza da cui si esce è la sua e
+    resta sul disco, si vede in `queues`, e riparte quando il nodo torna li'.
+    """
+    who = _who(request)
+    tenuta = HOLDING.holder()
+    if tenuta is not None and tenuta.who != who:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Questo nodo è in mano a {tenuta.who}: non lo puoi "
+                   f"riportare al container locale al posto suo.")
+    lasciato = HOLDING.release(who)
+    _swap(LOCAL)
+    stato = _room_state(reveal=True)
+    stato["ok"] = True
+    stato["message"] = (
+        "Torno a scrivere nel container locale di questo nodo."
+        + (" Il nodo è libero." if lasciato else "")
+        + (f" Restano {sum(q['pending'] for q in stato['queues'])} operazioni "
+           f"in coda per le stanze di prima: ripartono quando il nodo ci torna."
+           if stato["queues"] else ""))
+    return stato
+
+
 # ── the device ────────────────────────────────────────────────────────────────
 
 @public.get("/", response_class=HTMLResponse, tags=["device"])
@@ -905,5 +1239,18 @@ if _BRAND.is_dir():
     from fastapi.staticfiles import StaticFiles
     app.mount("/brand", StaticFiles(directory=str(_BRAND)), name="brand")
 
-app.include_router(public)
+# L'ORDINE CONTA, ED È QUESTO PER UNA RAGIONE MISURATA.
+#
+# `public` finisce con la rotta jolly della conchiglia (`/{shell_file:path}`), e
+# FastAPI prova le rotte nell'ordine in cui sono registrate. Con `public` per
+# primo, **ogni GET sotto `/v1/` che vive su questo router veniva raccolto dal
+# jolly** e rispondeva `404 not part of the shell` senza mai arrivare al suo
+# gestore: misurato il 2 ottobre su `GET /v1/room`, che esisteva e non si
+# raggiungeva. Le altre `/v1/...` in GET non se n'erano accorte perché stanno
+# tutte su `public`, dichiarate PRIMA del jolly.
+#
+# I due router non condividono nessun percorso, quindi invertirli non cambia
+# niente per nessuno tranne che il jolly resta l'ultimo — che è l'unica cosa che
+# un jolly deve essere. `test_la_conchiglia_non_mangia_le_rotte_di_v1` lo tiene.
 app.include_router(v1)
+app.include_router(public)

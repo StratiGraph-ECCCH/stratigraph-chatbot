@@ -93,6 +93,13 @@
     <button class="navitem" type="button" id="nav-voice" aria-current="true">Detta</button>
     <h3>Schede</h3>
     <div id="nav-schede"></div>
+    <!-- DOVE FINISCE QUELLO CHE DICI. Nella colonna e non sotto il bottone
+         grande: puntare il nodo a una stanza è un gesto raro — si fa una volta
+         la mattina — mentre dettare si fa tutto il giorno. Quello che si fa una
+         volta sta dietro. Il NOME della stanza invece sta nell'intestazione,
+         perché quello si legge in continuazione. -->
+    <h3 id="nav-room-title">Dove scrivo</h3>
+    <div id="nav-room"></div>
     <!-- DOVE I CONTROLLI DELLA BARRA VANNO A FINIRE SUL TELEFONO. Vuoto sulle
          altre soglie: i nodi si SPOSTANO qui, non si duplicano — due copie di
          un selettore sono due stati il giorno che qualcuno ne tocca uno. -->
@@ -245,6 +252,20 @@ const STRINGS = {
     "photos.other": "other number",
     "photos.ask": "Which unit is this photo of?",
     "photos.nokeep": "I could not keep the photo on this device: it was NOT taken.",
+    "room.local": "local container",
+    "room.in": "room {room}",
+    "room.in.held": "room {room} · held",
+    "room.heldby": "This node is held by {who}: what is written here goes into the room under that name.",
+    "room.left.one": "1 operation still queued for a room this node has left.",
+    "room.left.many": "{n} operations still queued for {rooms} rooms this node has left.",
+    "room.placeholder": "room, or a handoff link",
+    "room.point": "Write here",
+    "room.back": "Local container",
+    "room.pointing": "Asking…",
+    "room.pointed": "Pointed.",
+    "room.went.back": "Back to the local container.",
+    "room.refused": "The node refused.",
+    "room.unreachable": "The node did not answer.",
     "signin.failed": "Sign-in failed: ",
     "signin.noPending": "this tab had no sign-in in progress.",
     "signin.badState": "the sign-in state does not match: refusing a code this tab did not ask for.",
@@ -299,6 +320,20 @@ const STRINGS = {
     "photos.other": "altro numero",
     "photos.ask": "Di che unità è questa foto?",
     "photos.nokeep": "Non sono riuscito a tenere la foto su questo dispositivo: NON è stata scattata.",
+    "room.local": "container locale",
+    "room.in": "stanza {room}",
+    "room.in.held": "stanza {room} · tenuto",
+    "room.heldby": "Questo nodo è tenuto da {who}: quello che si scrive da qui entra nella stanza con quel nome.",
+    "room.left.one": "1 operazione ancora in coda per una stanza che il nodo ha lasciato.",
+    "room.left.many": "{n} operazioni ancora in coda per {rooms} stanze che il nodo ha lasciato.",
+    "room.placeholder": "stanza, o un link di consegna",
+    "room.point": "Scrivi qui",
+    "room.back": "Container locale",
+    "room.pointing": "Chiedo…",
+    "room.pointed": "Puntato.",
+    "room.went.back": "Torno al container locale.",
+    "room.refused": "Il nodo ha rifiutato.",
+    "room.unreachable": "Il nodo non ha risposto.",
     "signin.failed": "Firma non riuscita: ",
     "signin.noPending": "questa scheda non aveva una firma in corso.",
     "signin.badState": "lo stato della firma non corrisponde: rifiuto un codice che questa scheda non ha chiesto.",
@@ -913,6 +948,10 @@ async function ping() {
     // Which speech road, from what the node SAYS it has — asked every time, so a
     // node that gains (or loses) a model is followed rather than remembered.
     chooseSpeechRoad(health);
+    // DOVE FINISCE QUELLO CHE DICI, a ogni battito e non una volta all'avvio:
+    // il nodo lo si può ripuntare da un altro dispositivo, e una riga che dice
+    // la stanza di mezz'ora fa è peggio di nessuna riga.
+    window.SGRoom?.(health);
     flush();
   } catch {
     state.className = "state off";

@@ -48,6 +48,10 @@ class FakeRelay:
 
     def __init__(self, *, can_write=True, apply_ops=True, noise=False):
         self.received = []
+        #: il documento che questa stanza mostra a chi chiede uno snapshot. Un
+        #: contenitore vuoto è quello che il relay vero risponde per una stanza
+        #: nuova, che è il caso di quasi tutti i test.
+        self.doc = {"graphs": {}}
         self.can_write = can_write
         self.apply_ops = apply_ops
         self.noise = noise
@@ -120,6 +124,17 @@ class FakeRelay:
                     # non era di nessuno, e con una sessione tenuta quella
                     # sfasava di uno tutte le successive. Il relay vero risponde
                     # solo agli `op`.
+                    # …e a `request_snapshot`, dal 2 ottobre. Il relay vero
+                    # risponde (`ws.py`), questo finto no: `has_node` — che
+                    # `create_su` chiama a ogni scheda — restava ad aspettare
+                    # il timeout intero e poi ripiegava sul container locale.
+                    # Dieci secondi per una scheda in un test, e una prova che
+                    # misurava il ripiego invece della stanza.
+                    if message.get("type") == "request_snapshot":
+                        await socket.send(json.dumps({
+                            "v": 2, "type": "snapshot", "source": "em-server",
+                            "payload": {"doc": self.doc}}))
+                        continue
                     if message.get("type") != "op":
                         continue
                     await socket.send(json.dumps({

@@ -16,6 +16,7 @@ import {
   otherFields,
 } from "./scheda.js";
 import { mount as mountPhotos } from "./photos.js";
+import { mount as mountRoom } from "./room.js";
 
 const $ = (id) => document.getElementById(id);
 const SG = () => window.SG || {};
@@ -348,6 +349,11 @@ function wireShell() {
     seam: SG(), proposeUs: () => state.us || "",
   });
   repaintPhotos();
+
+  // DOVE SCRIVE IL NODO. Esposto su `window` perché a chiamarlo è `ping()`,
+  // che vive nella pagina e non in un modulo: la conchiglia dichiara un seam
+  // sola (`window.SG`) e questa è la sua controparte nell'altro verso.
+  window.SGRoom = mountRoom($("nav-room"));
 
   // Il modo si RIPROPONE quando la finestra cambia, ma non sovrascrive una
   // scelta: `effectiveMode` guarda prima cosa è stato scelto.

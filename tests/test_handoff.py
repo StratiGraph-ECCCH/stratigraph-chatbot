@@ -97,14 +97,78 @@ def test_a_node_with_no_oidc_joins_without_a_token_rather_than_failing():
     assert writer.room_id == "r" and writer._token == ""
 
 
+def _body(source: str, name: str) -> str:
+    """Il corpo di UNA funzione: da `def <name>` alla prossima definizione di
+    primo livello.
+
+    Non `split(altro_nome)`, che era come lo tagliava prima: `sign_in` e
+    `writer_from_link` non sono piu' adiacenti — fra loro c'e' `exchange` — e
+    quel taglio si portava dentro il file mezzo, cioe' misurava un'altra
+    funzione credendo di misurare questa.
+    """
+    import re
+
+    resto = source.split(f"def {name}", 1)[1]
+    prossima = re.search(r"\n(?:def |class |# ── )", resto)
+    return resto[:prossima.start()] if prossima else resto
+
+
+def _sign_in_body(source: str) -> str:
+    """Il corpo di `sign_in`, e solo quello.
+
+    IL CANCELLO E' SCATTATO IL 2 OTTOBRE, e la conversazione che voleva avere e'
+    questa: la regola «nessun `client_secret`, mai» era giusta finche' in questo
+    file c'era **un solo** flusso, e quel flusso e' PKCE su un client pubblico —
+    dove un segreto sarebbe un segreto pubblicato.
+
+    Da stanotte ce n'e' un secondo, `exchange`, che e' l'opposto: uno scambio
+    RFC 8693 e' un'operazione di un client CONFIDENZIALE, e senza il segreto il
+    realm non ha modo di sapere che a chiedere sia questo nodo. Il segreto li'
+    non e' un difetto: e' la prova d'identita' del dispiegamento, e non e' la
+    credenziale di nessuna persona.
+
+    Quindi la regola si restringe invece di sparire — **il segreto non entra nel
+    flusso PKCE** — e resta dimostrabile, che e' l'unico modo di stringerla
+    onestamente. `test_the_gate_still_bites` lo verifica su un caso finto.
+    """
+    return _body(source, "sign_in")
+
+
 def test_the_token_is_never_written_down():
     source = (Path(__file__).resolve().parent.parent / "app" / "handoff.py"
               ).read_text(encoding="utf-8")
+    dentro = _sign_in_body(source)
     for sink in ("open(", "Path(", "json.dump", "os.environ["):
-        assert f"{sink}" not in source.split("def sign_in")[1].split("def writer_from_link")[0] \
-            or sink == "open(",  f"{sink} inside the sign-in"
-    # …and no client secret, ever: a public client that sent one would publish it
-    assert "client_secret" not in source.replace("# NO client_secret", "")
+        assert f"{sink}" not in dentro or sink == "open(", \
+            f"{sink} inside the sign-in"
+    # …and no client secret in the PKCE flow: a public client that sent one
+    # would publish it. `exchange` is a different flow and a different client.
+    assert "client_secret" not in dentro.replace("# NO client_secret", "")
+
+
+def test_the_gate_still_bites():
+    """Una guardia addolcita che non morde da' lo stesso verde di una che
+    funziona. Questa e' la prova che morde ancora."""
+    finto = ("def sign_in(...):\n    body = {'client_secret': 'sbagliato'}\n"
+             "\ndef writer_from_link(...):\n")
+    assert "client_secret" in _sign_in_body(finto)
+
+
+def test_the_exchange_is_a_confidential_client_and_says_so():
+    """E il segreto sta dove deve: nello scambio, letto dall'ambiente, mai
+    scritto e mai stampato."""
+    source = (Path(__file__).resolve().parent.parent / "app" / "handoff.py"
+              ).read_text(encoding="utf-8")
+    scambio = _body(source, "exchange(")
+    assert '"client_secret": source["OIDC_CLIENT_SECRET"].strip()' in scambio
+    # I POZZI SU DISCO, e NON `open(` — che `urlopen(` contiene. E' la settima
+    # volta in questo ecosistema che una guardia morde una sottostringa invece
+    # di un fatto (`anno` in «cannot», `white` in `--sg-off-white`, `area` in
+    # una frase italiana, `gc_watermark` e `compact_section` in due docstring,
+    # `d{1,5}` in un commento). Qui il fatto e' «scrive da qualche parte», e
+    # scrivere vuole uno di questi.
+    for sink in ("Path(", "json.dump", "print(", ".write_text", ".write_bytes"):
+        assert sink not in scambio, f"{sink} dentro lo scambio"
 
 
 def test_pkce_is_S256_and_the_state_is_checked():

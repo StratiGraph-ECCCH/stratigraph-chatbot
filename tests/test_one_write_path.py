@@ -43,7 +43,12 @@ ALLOWED = {
     # posto — lo tiene il test qui sotto, che guarda i verbi e non i socket.
     "session.py": "la STANZA, tenuta aperta: il socket di writer.py, seduto",
     "intent.py": "il modello di intento sul nodo (/chat/completions)",
-    "handoff.py": "il realm (scambio del codice OIDC) e /v1/auth-config",
+    # 2026-10-02 · aggiunto lo SCAMBIO (RFC 8693): il nodo chiede al realm un
+    # token per la stanza a nome di chi ha firmato qui. Stessa controparte di
+    # prima — il realm — e un verbo in più, dichiarato perché questa tabella
+    # esiste per dire con chi si parla e non solo quanti lo fanno.
+    "handoff.py": "il realm (scambio del codice OIDC, scambio del token "
+                  "RFC 8693) e /v1/auth-config",
     "assets.py": "lo store degli asset del nodo",
     # 2026-09-30 · IL CANCELLO NON È SCATTATO, e lo dichiaro lo stesso, perché
     # è la conversazione che questa tabella esiste per avere.
