@@ -32,6 +32,8 @@ import sys
 
 import pytest
 
+import sorgenti
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 WEB = pathlib.Path(__file__).resolve().parent.parent / "web"
@@ -173,47 +175,9 @@ def test_the_work_area_and_the_signature_start_HIDDEN_in_the_markup():
     assert re.search(r'<div class="signature" id="signature" hidden>', PAGE)
 
 
-def dentro(markup: str, apertura: str) -> str:
-    """Il sottoalbero di un elemento, CONTANDO i tag di quel nome.
-
-    E non `markup[markup.index(apertura):][:markup.index("</section>")]`, che è
-    come si faceva qui: quella fetta finisce al PRIMO tag di chiusura, quindi
-    una sezione annidata la tronca — e tutto ciò che viene dopo l'annidata
-    diventa invisibile alla guardia, che continua a sembrare verde finché il
-    controllo che cerca non è proprio uno di quelli persi.
-
-    Misurato il 5 ottobre: aggiunto un `<section id="chat">` dentro
-    `<section id="work">`, questa guardia ha detto che la casella di testo del
-    dettato «è raggiungibile senza firma». Non lo era: era dopo la sezione
-    annidata.
-
-    È la stessa famiglia di difetti del 4 ottobre in `stratigraph-server` — una
-    guardia che misura il FILE invece della cosa. Qui la cura minima è contare i
-    tag; la cura vera è un lettore condiviso come `tests/sorgenti.py` di là e
-    `frontend/scripts/sorgenti.mjs` in EMStudio, e questo repo non ce l'ha
-    ancora (vedi il referto del 5 ottobre).
-    """
-    nome = apertura.lstrip("<").split()[0].split(">")[0]
-    inizio = markup.index(apertura)
-    livello, i = 0, inizio
-    apre, chiude = f"<{nome}", f"</{nome}>"
-    while i < len(markup):
-        if markup.startswith(apre, i):
-            livello += 1
-            i += len(apre)
-        elif markup.startswith(chiude, i):
-            livello -= 1
-            i += len(chiude)
-            if livello == 0:
-                return markup[inizio:i]
-        else:
-            i += 1
-    raise AssertionError(f"{apertura!r} non è mai chiuso")
-
-
 def test_the_input_bar_lives_inside_the_work_area():
     """The gate is not a banner over a working page — the page does not work."""
-    work = dentro(PAGE, '<section id="work"')
+    work = sorgenti.dentro(PAGE, '<section id="work"')
     for control in ('id="typed"', 'id="rec"', 'id="send"', 'id="shoot"'):
         assert control in work, f"{control} is reachable without a signature"
 
@@ -221,7 +185,7 @@ def test_the_input_bar_lives_inside_the_work_area():
 def test_E_LA_GUARDIA_QUI_SOPRA_MORDE_ANCORA_se_un_controllo_esce():
     """La prima delle due prove: spostare un controllo fuori la fa scattare."""
     rotta = PAGE.replace('<input type="text" id="typed"', '<input type="text" id="OTHER"')
-    work = dentro(rotta, '<section id="work"')
+    work = sorgenti.dentro(rotta, '<section id="work"')
     assert 'id="typed"' not in work
 
 
@@ -233,7 +197,7 @@ def test_E_NON_MORDE_PIU_su_una_sezione_ANNIDATA():
     """
     ingenuo = PAGE[PAGE.index('<section id="work"'):]
     ingenuo = ingenuo[:ingenuo.index("</section>")]
-    onesto = dentro(PAGE, '<section id="work"')
+    onesto = sorgenti.dentro(PAGE, '<section id="work"')
     assert 'id="chat"' in onesto, "la sezione annidata c'è davvero"
     assert 'id="typed"' not in ingenuo, "…e la versione a taglio la perdeva"
     assert 'id="typed"' in onesto, "…mentre quella che conta i tag no"

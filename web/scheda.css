@@ -401,6 +401,19 @@
   color: var(--sf-accent-ink);
   font-weight: var(--sg-weight-subtitle);
 }
+/* IL RITORNO — visibile solo quando serve, e non è un bersaglio da guanto.
+ *
+ * `flex: none` per la stessa ragione di ☰: non è un quinto della barra. E non
+ * porta l'accento — non è l'azione della schermata, è l'uscita da una scelta —
+ * ma porta il NOME del modo verso cui torna, perché il 5 ottobre l'unica cosa
+ * visibile era un'icona che diceva «navigazione». */
+.thumbbar #tb-back {
+  flex: none;
+  width: auto;
+  white-space: nowrap;
+  padding: 0 var(--sg-space-3);
+  color: var(--sg-muted);
+}
 .thumbbar .step {
   font-family: var(--sg-font-mono);
   font-size: var(--sg-text-xs);

@@ -12,11 +12,13 @@
 
 import {
   definitionFor, effectiveMode, keyField, payloadFor, proposeMode,
-  refreshCompleteness, render, save, stepTo, thumbbarPlan, trenchFields,
-  otherFields,
+  refreshCompleteness, rememberMode, render, save, stepTo, thumbbarPlan,
+  trenchFields, otherFields, wayBack,
 } from "./scheda.js";
 import { mount as mountPhotos } from "./photos.js";
-import { mount as mountRoom } from "./room.js";
+import { mount as mountRoom, roomOf } from "./room.js";
+import { mount as mountIndex } from "./indice.js";
+import { arrivalPlan, readArrival } from "./arrivo.js";
 import { mount as mountChat } from "./chat.js";
 
 const $ = (id) => document.getElementById(id);
@@ -26,13 +28,14 @@ const SG = () => window.SG || {};
  * non c'è niente da ridisegnare, e una funzione che non fa niente sarebbe una
  * bugia comoda. */
 let repaintPhotos = () => {};
+/* …e la stessa cosa per l'elenco di cosa c'è già nella stanza. */
+let repaintIndex = async () => {};
 
 const MODES = [
   ["phone", "Telefono"],
   ["tablet", "Tablet"],
   ["desktop", "Scrivania"],
 ];
-const MODE_KEY = "sg.scheda.mode.v1";
 const THEME_KEY = "sg.theme.v1";
 
 /* ── il tema ────────────────────────────────────────────────────────────────
@@ -104,7 +107,10 @@ function paintModes() {
       // Scegliere SCRIVE la scelta: è ciò che la fa sopravvivere a un
       // ricaricamento, e il puntino sul chip proposto resta a dire che la
       // larghezza ne suggerirebbe un altro.
-      try { localStorage.setItem(MODE_KEY, value); } catch { /* session only */ }
+      // …E LA SCELTA PORTA LA FINESTRA SU CUI È STATA FATTA. `rememberMode` è
+      // l'unico posto che scrive: qui prima c'era una `setItem` per conto suo,
+      // cioè un secondo scrittore della stessa chiave.
+      rememberMode(value, window.innerWidth);
       setMode(value);
     });
     bar.append(chip);
@@ -144,6 +150,29 @@ function paintThumbbar() {
   for (const id of ["tb-prev", "tb-step", "tb-next", "tb-save"]) {
     $(id).hidden = !plan.steps;
   }
+  paintWayBack();
+}
+
+/* LA VIA D'USCITA, VISIBILE SENZA SAPERE GIÀ DOV'È.
+ *
+ * Il 24 settembre la maniglia è tornata a esistere; stanotte è stato misurato
+ * che esistere non basta — su una finestra da 1574 i tre chip stavano a y=1372,
+ * fuori dallo schermo, e l'unico bersaglio visibile era un ☰ che dice
+ * «navigazione» e non «questa finestra ne proporrebbe un altro».
+ *
+ * Quindi il ritorno sta in barra, che sul telefono c'è sempre, e nomina il modo
+ * verso cui torna invece di essere un'altra icona da indovinare. */
+function paintWayBack() {
+  const bottone = $("tb-back");
+  if (!bottone) return;
+  const verso = wayBack(state.mode, window.innerWidth);
+  bottone.hidden = !verso;
+  if (!verso) return;
+  const nome = (MODES.find(([value]) => value === verso) || [])[1] || verso;
+  bottone.textContent = SG().t
+    ? SG().t("mode.back", { mode: nome }) : `↔ ${nome}`;
+  bottone.setAttribute("aria-label", bottone.textContent);
+  bottone.dataset.mode = verso;
 }
 
 function setMode(mode) {
@@ -205,11 +234,12 @@ async function loadSchede() {
 
 /* ── aprire una scheda ───────────────────────────────────────────────────── */
 
-async function openScheda(id) {
+async function openScheda(id, su = null) {
   const says = $("scheda-says");
   state.panel = "scheda";
   $("scheda").hidden = false;
   $("work").hidden = true;
+  $("index").hidden = true;
   says.hidden = true;
   markNav(id);
   try {
@@ -232,6 +262,14 @@ async function openScheda(id) {
     state.def = def;
     state.keyField = keyField(def);
     state.step = 0;
+    // APERTA SU UN'UNITÀ CHE ESISTE GIÀ: il numero non si riscrive a memoria, e
+    // `create` è falso perché l'atto è correggere e non inventare. È la
+    // differenza che `update_su` esiste per tenere: un `add_node` su un id che
+    // non c'è lo CREA, quindi un numero sbagliato diventerebbe una US nuova.
+    if (su && su.us) {
+      state.us = String(su.us);
+      state.create = false;
+    }
     if (from === "cache") {
       says.hidden = false;
       says.textContent = "Definizione dalla cache: il nodo non risponde, " +
@@ -308,6 +346,14 @@ function wireThumbbar() {
   $("tb-next").addEventListener("click",
     () => stepTo($("scheda-host"), state, "next"));
   $("tb-save").addEventListener("click", () => save(state.def, state));
+  //  IL RITORNO: un tocco, e la scelta che si scrive porta questa finestra —
+  //  così tornare non è un'eccezione temporanea ma una scelta come le altre.
+  $("tb-back").addEventListener("click", () => {
+    const verso = $("tb-back").dataset.mode;
+    if (!verso) return;
+    rememberMode(verso, window.innerWidth);
+    setMode(verso);
+  });
 }
 
 /* ── avvio ───────────────────────────────────────────────────────────────── */
@@ -322,6 +368,7 @@ function wireShell() {
   $("nav-voice").addEventListener("click", () => {
     state.panel = "voice";
     $("scheda").hidden = true;
+    $("index").hidden = true;
     $("work").hidden = false;
     paintThumbbar();
     markNav("");
@@ -355,6 +402,17 @@ function wireShell() {
   // che vive nella pagina e non in un modulo: la conchiglia dichiara un seam
   // sola (`window.SG`) e questa è la sua controparte nell'altro verso.
   window.SGRoom = mountRoom($("nav-room"));
+  // COSA C'È GIÀ. `schede` è una funzione e non un valore: la lista delle
+  // definizioni arriva dal nodo dopo l'avvio, e passarla adesso vorrebbe dire
+  // passarne una vuota per sempre.
+  repaintIndex = mountIndex({
+    t: (k, v) => SG().t(k, v),
+    openScheda,
+    schede: () => {
+      try { return (JSON.parse(localStorage.getItem("sg.schede.v1") || "null")
+                    || {}).schede || []; } catch { return []; }
+    },
+  });
   //  IL SEAM E BASTA: la conchiglia dichiara `window.SG` e questo modulo non
   //  conosce altro. `t` e `show` vengono da lì, come per ogni altra superficie.
   window.SGChat = mountChat({ t: (k, v) => SG().t(k, v),
@@ -371,11 +429,60 @@ function wireShell() {
   setMode(effectiveMode(window.innerWidth));
 }
 
+/* ── SI ARRIVA DA UNA STANZA ───────────────────────────────────────────────
+ *
+ * Il link del server porta un posto — `?server=…&room=…` — e mai un modo. Fino
+ * al 6 ottobre quei due parametri non li leggeva nessuno: chi arrivava da
+ * `/em/rooms/` atterrava sul microfono e riscriveva a mano il nome della stanza
+ * che era già nell'indirizzo.
+ *
+ * I tre esiti li decide `arrivalPlan`, che è pura e provata. Qui c'è solo cosa
+ * si mostra, e la riga che conta è la terza: **ripuntare il nodo lo decide una
+ * persona**. Farlo da soli vorrebbe dire togliere un nodo condiviso a chi ce
+ * l'ha, in silenzio, per aver aperto un link.
+ */
+async function land() {
+  const arrivo = readArrival(window.location.search);
+  if (arrivo.refused.length) {
+    // RIFIUTATO A VOCE, come fa `FORBIDDEN` in `app/handoff.py`: accettarne uno
+    // insegna a chi ha costruito il link che mandarlo funziona.
+    SG().show(false, SG().t("index.refused", { what: arrivo.refused.join(", ") }));
+  }
+  let salute = null;
+  try {
+    salute = await (await fetch(SG().node + "/health",
+                                { cache: "no-store" })).json();
+  } catch { /* il nodo non risponde: si resta dove si è, ed è onesto */ }
+  const piano = arrivalPlan(arrivo, roomOf(salute));
+  if (piano.do === "nothing") return;
+
+  if (piano.do === "offer") {
+    // La colonna, aperta sul pannello che punta il nodo, con la stanza già
+    // scritta: il gesto resta uno, e resta di chi lo fa.
+    $("sidenav").dataset.open = "true";
+    const campo = $("room-target");
+    if (campo) campo.value = piano.server
+      ? `${piano.server.replace(/\/+$/, "")}/open?room=${encodeURIComponent(piano.room)}`
+      : piano.room;
+    SG().show(true, SG().t("index.offer", { room: piano.room }));
+    return;
+  }
+
+  state.panel = "index";
+  $("work").hidden = true;
+  $("scheda").hidden = true;
+  $("index").hidden = false;
+  paintThumbbar();
+  await repaintIndex();
+}
+
 wireShell();
 loadSchede();
+void land();
 
 // Esposto per la verifica dal browser: è quello che una cattura non può
 // dimostrare (dove stanno i bersagli, quale modo è attivo, quanti campi).
 window.SGShell = { state, openScheda, setMode, draw, trenchFields, otherFields,
-                   payloadFor, paintThumbbar, thumbbarPlan,
-                   repaintPhotos: () => repaintPhotos() };
+                   payloadFor, paintThumbbar, thumbbarPlan, land,
+                   repaintPhotos: () => repaintPhotos(),
+                   repaintIndex: () => repaintIndex() };

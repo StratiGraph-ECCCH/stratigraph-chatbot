@@ -203,6 +203,60 @@ def _is_unit(node: Dict[str, Any]) -> bool:
     return str(node.get("node_type") or "").startswith(_STRAT_PREFIXES)
 
 
+def units_of(document: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """LE SCHEDE DI UN DOCUMENTO — cioè le unità che ci sono già.
+
+    Una sola funzione per i due scrivani: la forma di un'unità è una sola, e due
+    copie sarebbero due risposte il giorno che qualcuno ne tocca una.
+
+    Un'unità non registra con quale scheda è stata compilata, e non si inventa
+    qui: si dice quanti campi porta, e quale standard riaprirla lo decide chi la
+    riapre. Una US registrata con l'ICCD non è una US registrata col foglio
+    ungherese, e indovinarlo sarebbe la stessa famiglia di errori del numero
+    mistypato che `update_su` esiste per rifiutare.
+    """
+    from .conversazione import is_message
+
+    fuori: List[Dict[str, Any]] = []
+    for section in (document.get("graphs") or {}).values():
+        for node in section.get("nodes") or []:
+            if is_message(node):
+                continue              # una frase non è una scheda
+            data = node.get("data") if isinstance(node.get("data"), dict) else {}
+            if data.get("removed"):
+                continue              # un tombstone non è un'unità
+            #: i campi CHE QUALCUNO HA SCRITTO: i timbri e gli orologi sono del
+            #: sistema, e contarli direbbe che una scheda vuota è piena
+            scritti = sorted(k for k in data
+                             if k not in _META and not k.startswith("_"))
+            #: `description` sta sul NODO e non in `data` (misurato in
+            #: `create_su`): contarlo lì e non qui direbbe che un'unità
+            #: dettata in tre parole è vuota, che è il contrario di vero.
+            if str(node.get("description") or "").strip():
+                scritti.append("description")
+                scritti.sort()
+            #: IL NUMERO, che è quello che gli attrezzi vogliono — e non si
+            #: indovina qui: lo ricava l'inverso di `unit_id_for`, che vive
+            #: accanto a lui. `""` quando l'id viene da un grafo importato, e
+            #: allora la superficie lo dice invece di proporre una scheda su
+            #: un'unità sbagliata.
+            from .tools import number_from_unit_id
+            fuori.append({
+                "id": str(node.get("id")),
+                "number": number_from_unit_id(node.get("id"),
+                                              node.get("name") or ""),
+                "name": str(node.get("name") or node.get("id") or ""),
+                "node_type": str(node.get("node_type") or ""),
+                "description": str(node.get("description") or ""),
+                "fields": len(scritti),
+                "field_names": scritti,
+                "created_by": data.get("created_by"),
+                "modified_at": data.get("modified_at") or data.get("created_at"),
+            })
+    fuori.sort(key=lambda u: (u["node_type"], u["name"], u["id"]))
+    return fuori
+
+
 class LocalWriter:
     """The node's own container — the offline case, which is the base case.
 
@@ -242,6 +296,12 @@ class LocalWriter:
         key = doc.get("active_graph_id") or next(iter(graphs), "scavo")
         return graphs.setdefault(key, {"graph_id": key, "nodes": [],
                                        "edges": []})
+
+    def units(self) -> List[Dict[str, Any]]:
+        """Le unità del CONTAINER. Stessa forma di quelle della stanza: un nodo
+        che parte headless e uno che arriva da un link rispondono la stessa
+        cosa, e la superficie non deve sapere quale dei due sta parlando."""
+        return units_of(self._read())
 
     # ── the seam ─────────────────────────────────────────────────────────────
 
@@ -364,6 +424,16 @@ class LocalWriter:
                     f"nessuna unità.")
         return (f"Su «{self.study_name()}» ci sono {len(units)} unità. "
                 f"L'ultima è {units[-1].get('name') or units[-1].get('id')}.")
+
+
+#: Quello che sta in `data` e non l'ha scritto nessuno: i timbri editoriali, gli
+#: orologi del CRDT, il marcatore di volatilità, le tracce dell'importazione.
+#: Contarli come campi direbbe che una scheda vuota è piena.
+_META = frozenset({
+    "created_at", "created_by", "modified_at", "modified_by",
+    "field_clocks", "removed", "aux_volatile", "em_volatile_aux",
+    "original_id", "original_emid", "graph_id",
+})
 
 
 class RoomWriter:
@@ -966,6 +1036,22 @@ class RoomWriter:
         """Asks the ROOM first — see `node` for the round trip that showed why."""
         return self.node(node_id) is not None
 
+    def _document(self) -> Dict[str, Any]:
+        """Il documento della stanza, chiesto dalla sessione che c'è già.
+
+        Estratto da `_snapshot_node` il 6 ottobre, quando la seconda domanda sul
+        documento è arrivata: due `request_snapshot` scritti a mano sono due
+        posti da cui sbagliare la forma della risposta.
+        """
+        self._seated()
+        self.session.send("request_snapshot", {})
+        answer = self.session.await_answer("snapshot")
+        return ((answer.get("payload") or {}).get("doc")) or {}
+
+    def units(self) -> List[Dict[str, Any]]:
+        """Le unità della STANZA. La forma la decide `units_of`."""
+        return units_of(self._document())
+
     def _snapshot_node(self, node_id: str) -> Optional[Dict[str, Any]]:
         """Un nodo, letto dal documento della stanza.
 
@@ -980,10 +1066,7 @@ class RoomWriter:
         di progetto. Adesso la sessione c'è, e la domanda si fa da dentro:
         `request_snapshot` invece di una connessione nuova.
         """
-        self._seated()
-        self.session.send("request_snapshot", {})
-        answer = self.session.await_answer("snapshot")
-        doc = ((answer.get("payload") or {}).get("doc")) or {}
+        doc = self._document()
         for section in (doc.get("graphs") or {}).values():
             for node in section.get("nodes") or []:
                 if node.get("id") == node_id:

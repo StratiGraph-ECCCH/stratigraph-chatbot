@@ -63,22 +63,118 @@ export function proposeMode(width) {
   return "desktop";
 }
 
-function chosenMode() {
-  try {
-    const saved = localStorage.getItem(MODE_KEY);
-    return MODES.includes(saved) ? saved : null;
-  } catch { return null; }
+/* ── UNA SCELTA NON È UNA CONDANNA ─────────────────────────────────────────
+ *
+ * Fino al 5 ottobre questa parte era `chosenMode() || proposeMode(width)`, e
+ * quella riga dice: una preferenza scelta una volta, su una finestra, batte per
+ * sempre la larghezza di ogni finestra futura. Misurato stanotte nel DOM vero,
+ * arrivando dal server:
+ *
+ *     finestra 1574 · proposeMode → desktop · scelto in localStorage → phone
+ *     → effectiveMode = phone      la scelta vince
+ *     → #modes finisce nella colonna, che è chiusa (translateY +636px)
+ *     → i tre chip stanno a y=1372 su una finestra alta 900: FUORI dallo schermo
+ *     → l'unico bersaglio a schermo che riguardi il modo: ☰, «Apri la navigazione»
+ *
+ * La riparazione del 24 settembre regge — la maniglia c'è, `thumbbarPlan` la
+ * tiene — ma una maniglia che esiste non è una via d'uscita che si trova.
+ *
+ * ## LA SCELTA PORTA LA PROPRIA OCCASIONE
+ *
+ * Una scelta di modo È una frase sulla finestra su cui è stata fatta: «su una
+ * finestra come questa voglio il telefono». Finché la finestra è di quella
+ * categoria la frase vale; quando la categoria cambia, la frase non parla più
+ * di questa finestra e si torna a proporre.
+ *
+ * I due casi veri qui sopra non si perdono, ed è il punto: il telefono grande
+ * in laboratorio resta telefono su ogni finestra di quella larghezza, e il
+ * portatile sul tavolino resta tablet su ogni finestra della sua. Quello che
+ * scade non è la preferenza — è la sua pretesa di parlare di finestre che non
+ * ha mai visto.
+ *
+ * ## E UNA SCELTA SENZA OCCASIONE NON È PROVA DI NIENTE
+ *
+ * Le scelte scritte prima di stanotte sono una stringa nuda: dicono il modo e
+ * non la finestra. Non si possono onorare senza inventare l'occasione, quindi
+ * si ri-propone una volta e la prima scelta esplicita ne scrive una completa.
+ * È anche ciò che ripara la sera di E.D., dove la scelta e l'arrivo erano tutti
+ * e due su una finestra da scrivania.
+ *
+ * Nessuna chiave nuova: la stessa `sg.scheda.mode.v1`, con dentro un oggetto.
+ * Una seconda chiave sarebbe stato un secondo stato da tenere in accordo, e
+ * questa interfaccia ha già pagato quella forma con le due caselle «US».
+ */
+
+/** Come si legge quello che c'è scritto, nelle due forme. `null` = niente. */
+export function readChoice(saved) {
+  if (typeof saved === "string" && MODES.includes(saved)) {
+    return { mode: saved, at: null };          // scritta prima del 5 ottobre
+  }
+  if (saved && typeof saved === "object" && MODES.includes(saved.mode)) {
+    const at = Number(saved.at);
+    return { mode: saved.mode, at: Number.isFinite(at) && at > 0 ? at : null };
+  }
+  return null;
 }
 
-function rememberMode(mode) {
+/** IL MODO CHE VALE, e perché — pura, perché è la riga che si può sbagliare
+ *  in silenzio. `why` non è decorazione: è quello che l'interfaccia mostra
+ *  quando deve dire «questa finestra ne proporrebbe un altro».
+ *
+ *  `proposed`        nessuna scelta: decide la larghezza
+ *  `chosen`          una scelta fatta su una finestra come questa
+ *  `another-window`  una scelta fatta su una finestra di un'altra categoria
+ *  `unlabelled`      una scelta che non dice su quale finestra è stata fatta
+ */
+export function decideMode(width, saved) {
+  const proposed = proposeMode(width);
+  const choice = readChoice(saved);
+  if (!choice) return { mode: proposed, why: "proposed" };
+  if (choice.at === null) return { mode: proposed, why: "unlabelled" };
+  if (proposeMode(choice.at) !== proposed) {
+    return { mode: proposed, why: "another-window" };
+  }
+  return { mode: choice.mode, why: "chosen" };
+}
+
+/** IL RITORNO, quando il modo a schermo non è quello che questa finestra
+ *  proporrebbe: il modo verso cui tornare, oppure `null`.
+ *
+ *  Il criterio non è che i chip esistano nel DOM — stanotte esistevano, con un
+ *  rettangolo, 472 px sotto il bordo della finestra. È che si vedano da dove si
+ *  guarda. Sul telefono i chip stanno nella colonna chiusa, quindi il ritorno
+ *  va in barra; sulle altre soglie i chip sono già in cima e questo dice `null`
+ *  quando il modo è quello proposto, cioè quasi sempre. */
+export function wayBack(mode, width) {
+  const proposed = proposeMode(width);
+  return proposed === mode ? null : proposed;
+}
+
+function storedChoice() {
+  try { return JSON.parse(localStorage.getItem(MODE_KEY) || "null"); }
+  catch (bad) {
+    // Una stringa nuda non è JSON: è la forma vecchia, e si legge com'è.
+    try { return localStorage.getItem(MODE_KEY); } catch { return null; }
+  }
+}
+
+/** L'UNICO posto che scrive la scelta. Prima erano due — `shell.js` la scriveva
+ *  da sé al clic — ed è la stessa forma dei quattro punti che avevano murato la
+ *  porta: due scritture della stessa cosa sono due occasioni di scriverne una
+ *  a metà. */
+export function rememberMode(mode, width) {
   try {
-    if (mode) localStorage.setItem(MODE_KEY, mode);
-    else localStorage.removeItem(MODE_KEY);
+    if (mode) {
+      localStorage.setItem(MODE_KEY, JSON.stringify(
+        { mode, at: Math.round(Number(width) || 0) || null }));
+    } else {
+      localStorage.removeItem(MODE_KEY);
+    }
   } catch { /* private window: the choice lasts the session, and that is all */ }
 }
 
 export function effectiveMode(width) {
-  return chosenMode() || proposeMode(width);
+  return decideMode(width, storedChoice()).mode;
 }
 
 /* ── LA BARRA DEI POLLICI È IL PAVIMENTO DEL TELEFONO, NON QUELLO DELLA SCHEDA

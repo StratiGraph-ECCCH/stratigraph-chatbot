@@ -1155,6 +1155,35 @@ def read_the_room(request: Request) -> Dict[str, Any]:
     return letto
 
 
+@v1.get("/room/units", tags=["room"])
+def room_units(request: Request) -> Dict[str, Any]:
+    """LE SCHEDE DI QUESTA STANZA — cioè le unità che ci sono già.
+
+    Chi arriva dal link del server ha già scelto una stanza: sta continuando un
+    lavoro, non ne comincia uno, e la prima cosa che deve trovare è **cosa
+    c'è**. Fino al 6 ottobre l'unica via per arrivarci era dettare qualcosa,
+    oppure aprire una scheda vuota e sperare che il numero fosse quello giusto.
+
+    Risponde anche quando il nodo scrive nel contenitore locale, e la risposta
+    ha la stessa forma: un nodo che parte headless e uno che arriva da un link
+    non sono due superfici diverse. `where` dice quale dei due sta parlando,
+    perché è la sola cosa che cambia il significato dell'elenco.
+
+    Non c'è la gemella che scrive: un'unità si crea con `create_su`, e ce n'è
+    una sola via.
+    """
+    _author(request)                   # firma valida, o 401 dall'autenticatore
+    try:
+        elenco = WRITER.units()
+    except Exception as chiusa:        # noqa: BLE001 — rete o porta chiusa
+        raise HTTPException(
+            status_code=502,
+            detail=f"Non riesco a leggere le unità: {chiusa}") from None
+    return {"units": elenco, "total": len(elenco),
+            "room": getattr(WRITER, "room_id", None),
+            "where": writer_describe(WRITER)}
+
+
 @v1.delete("/room", tags=["room"])
 def unpoint(request: Request) -> Dict[str, Any]:
     """Torna al container locale, e lascia il nodo.

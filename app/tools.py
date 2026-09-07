@@ -66,6 +66,32 @@ def unit_id_for(number: str) -> str:
     return f"US{str(number).strip()}"
 
 
+def number_from_unit_id(node_id: str, name: str = "") -> str:
+    """Il numero di un'unità, dal suo id — l'inverso di `unit_id_for`.
+
+    STA QUI accanto al suo gemello per la stessa ragione che la docstring sopra
+    racconta: scritto altrove sarebbe la seconda copia, e la seconda copia era
+    già sbagliata la prima volta.
+
+    Serve a riaprire una scheda su un'unità che esiste: la superficie ha un id e
+    un nome, gli attrezzi vogliono il NUMERO, e `update_su` rifiuta un numero
+    che non corrisponde a nessun nodo — che è la sua virtù, non un ostacolo da
+    aggirare con un'euristica.
+
+    `""` quando l'id non è stato coniato da `unit_id_for`: succede con i grafi
+    importati, e allora il numero non si indovina. Chi chiama lo dice invece di
+    proporre una scheda su un'unità sbagliata.
+    """
+    raw = str(node_id or "").strip()
+    if raw.startswith("US") and raw[2:].strip():
+        return raw[2:].strip()
+    #: la forma che `create_su` dà al NOME, quando l'id viene da altrove
+    label = str(name or "").strip()
+    if label.upper().startswith("US ") and label[3:].strip():
+        return label[3:].strip()
+    return ""
+
+
 #: What `update_su` will not change, though the CRDT would let it. `name` is
 #: derived from the unit number and is mentioned in other people's nodes; `id`
 #: is the identity itself. Refused by name rather than silently dropped, because

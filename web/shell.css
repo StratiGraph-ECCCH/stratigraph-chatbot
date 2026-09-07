@@ -333,3 +333,63 @@
   .chat-line { grid-template-columns: 1fr minmax(0, auto); }
   .chat-who { grid-column: 1 / -1; }
 }
+
+/* ── cosa c'è già in questa stanza ──────────────────────────────────────────
+ *
+ * L'elenco vive nella COLONNA CENTRALE e non nel cassetto: è dove atterra chi
+ * arriva dal link di una stanza, cioè la prima cosa che vede, e il cassetto è
+ * il posto delle cose che si fanno una volta.
+ *
+ * Zero colori letterali. E niente altezze fisse: una riga con una descrizione
+ * lunga va a capo invece di far scorrere la pagina di lato. */
+.indice-testa {
+  font-size: var(--sg-text-lg);
+  font-weight: var(--sg-weight-subtitle);
+  margin: 0 0 var(--sg-space-2);
+}
+#index-list { display: flex; flex-direction: column; }
+.indice-riga {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 0;
+  padding: var(--sg-space-2) var(--sg-space-3);
+  border: 0;
+  border-bottom: 1px solid var(--sg-line);
+  border-radius: 0;
+  background: none;
+  color: var(--sg-text);
+  font: inherit;
+  box-shadow: none;
+  cursor: pointer;
+}
+.indice-riga:hover { background: var(--sg-surface); }
+.indice-nome { font-weight: var(--sg-weight-subtitle); }
+.indice-riga .count {
+  float: right;
+  font-family: var(--sg-font-mono);
+  font-size: var(--sg-text-xs);
+  color: var(--sg-muted);
+}
+/* Cosa c'è, sotto il nome: la riga che fa riconoscere un'unità senza aprirla. */
+.indice-cosa {
+  display: block;
+  clear: both;
+  color: var(--sg-muted);
+  font-size: var(--sg-text-sm);
+  overflow-wrap: anywhere;
+}
+#index-list .navitem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 0;
+  padding: var(--sg-space-2) var(--sg-space-3);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--sg-text);
+  font: inherit;
+  box-shadow: none;
+  cursor: pointer;
+}

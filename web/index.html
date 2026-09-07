@@ -165,6 +165,15 @@
       <div class="said" id="said"></div>
     </section>
 
+    <!-- COSA C'È GIÀ IN QUESTA STANZA. Il posto dove atterra chi arriva dal
+         link del server: ha già scelto la stanza, sta continuando un lavoro e
+         non ne comincia uno. Vuoto — e nascosto — per chi arriva senza. -->
+    <section id="index" hidden>
+      <h2 class="indice-testa" id="index-title"></h2>
+      <div id="index-list"></div>
+      <p class="hint" id="index-note"></p>
+    </section>
+
     <!-- Dove il modulo si disegna. Vuoto finche' non si apre una scheda: un
          nodo che non serve definizioni e' l'assistente che e' sempre stato. -->
     <section id="scheda" hidden>
@@ -181,6 +190,12 @@
        svuota la scheda sta in CIMA alla scheda, dove il pollice non arriva. -->
   <div class="thumbbar" id="thumbbar" hidden>
     <button type="button" id="tb-nav" aria-label="Apri la navigazione">☰</button>
+    <!-- IL RITORNO, quando il modo a schermo non è quello che questa finestra
+         proporrebbe. Qui e non nella colonna: sul telefono i chip del modo
+         STANNO nella colonna, e una via d'uscita che si apre solo da ☰ è la
+         via d'uscita che il 5 ottobre non è stata trovata. Compare solo quando
+         serve — `wayBack` — così non è un bottone in più tutto il giorno. -->
+    <button type="button" id="tb-back" hidden></button>
     <button type="button" id="tb-prev" aria-label="Campo precedente">◀</button>
     <span class="step" id="tb-step"></span>
     <button type="button" id="tb-next" aria-label="Campo successivo">▶</button>
@@ -280,6 +295,23 @@ const STRINGS = {
     "chat.nolocal": "This node writes into the local container: there is no room where anybody is talking.",
     "chat.unreachable": "The room did not answer. Without a network you can say something — it queues — but you cannot read back.",
     "chat.queued": "Said. The room did not answer, so it is queued and leaves on the way back.",
+    "mode.back": "↔ {mode}",
+    "index.head.room": "In room {room}",
+    "index.head.local": "In the local container",
+    "index.fields.one": "1 field",
+    "index.fields.many": "{n} fields",
+    "index.total.one": "1 record.",
+    "index.total.many": "{n} records.",
+    "index.more": "{n} of {total} records are not shown.",
+    "index.empty": "Nothing has been recorded here yet. Dictate, and it appears.",
+    "index.signin": "Sign in to see what is already here.",
+    "index.unreachable": "I cannot read the room from here.",
+    "index.which": "With which standard do you reopen {unit}?",
+    "index.noSchede": "This node serves no definitions, so there is nothing to reopen it with.",
+    "index.back": "← back to the list",
+    "index.noNumber": "this unit's id does not carry a number: it cannot be reopened from here",
+    "index.offer": "The link names room «{room}», and this node writes somewhere else. Point it there?",
+    "index.refused": "The link tried to say how this is shown ({what}): refused. A link names a place, never a mode — the window decides.",
     "room.local": "local container",
     "room.in": "room {room}",
     "room.in.held": "room {room} · held",
@@ -361,6 +393,23 @@ const STRINGS = {
     "chat.nolocal": "Questo nodo scrive nel contenitore locale: non c'è una stanza in cui si stia parlando.",
     "chat.unreachable": "La stanza non ha risposto. Senza rete si può dire — va in coda — ma non si può rileggere.",
     "chat.queued": "Detto. La stanza non ha risposto, quindi è in coda e parte al ritorno.",
+    "mode.back": "↔ {mode}",
+    "index.head.room": "Nella stanza {room}",
+    "index.head.local": "Nel container locale",
+    "index.fields.one": "1 campo",
+    "index.fields.many": "{n} campi",
+    "index.total.one": "1 scheda.",
+    "index.total.many": "{n} schede.",
+    "index.more": "{n} schede su {total} non sono mostrate.",
+    "index.empty": "Qui non è ancora stato registrato niente. Detta, e compare.",
+    "index.signin": "Firma per vedere cosa c'è già.",
+    "index.unreachable": "Da qui non riesco a leggere la stanza.",
+    "index.which": "Con quale standard riapri {unit}?",
+    "index.noSchede": "Questo nodo non serve definizioni, quindi non c'è con cosa riaprirla.",
+    "index.back": "← torna all'elenco",
+    "index.noNumber": "l'id di questa unità non porta un numero: da qui non si riapre",
+    "index.offer": "Il link nomina la stanza «{room}», e questo nodo scrive altrove. Lo punto lì?",
+    "index.refused": "Il link ha provato a dire come si vede ({what}): rifiutato. Un link nomina un posto, mai un modo — decide la finestra.",
     "room.local": "container locale",
     "room.in": "stanza {room}",
     "room.in.held": "stanza {room} · tenuto",

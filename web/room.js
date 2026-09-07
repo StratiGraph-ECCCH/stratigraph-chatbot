@@ -43,9 +43,18 @@ export async function look() {
  *  Costruita dalla salute (pubblica, sempre disponibile) e non da `/v1/room`:
  *  deve dire qualcosa anche prima che qualcuno firmi, perche' e' proprio prima
  *  di firmare che serve sapere dove si andra' a scrivere. */
-export function headline(health, t) {
+/** In quale stanza scrive il nodo, secondo la salute — o "" per il container.
+ *
+ *  Estratta da `headline` il 6 ottobre, quando la stessa domanda l'ha fatta
+ *  anche l'arrivo da un link: due letture della stessa frase sono due modi di
+ *  leggerla male il giorno che `writes_to` cambia forma. */
+export function roomOf(health) {
   const dove = String((health && health.writes_to) || "");
-  const stanza = dove.startsWith("room ") ? dove.slice(5).split(" at ")[0] : "";
+  return dove.startsWith("room ") ? dove.slice(5).split(" at ")[0] : "";
+}
+
+export function headline(health, t) {
+  const stanza = roomOf(health);
   if (!stanza) return t("room.local");
   const tenuto = String((health && health.held) || "").startsWith("tenuto");
   return t(tenuto ? "room.in.held" : "room.in", { room: stanza });
