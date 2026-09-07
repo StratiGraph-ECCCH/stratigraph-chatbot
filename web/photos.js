@@ -45,6 +45,10 @@
  * quanto una riga; il posto giusto per una riga è quello dove è sempre stata.
  */
 
+//: LE DUE CONFERME, da un posto solo e senza dizionario dentro. Vendorizzato
+//: da `stratigraph-server/app/node_admin/confirm.js` — vedi `sync-brand.sh`.
+import { makeConfirm } from "./confirm.js";
+
 const DB = "sg-photos";
 const STORE = "photos";
 const VERSION = 1;
@@ -141,6 +145,15 @@ export function list() {
   return tx("readonly", (s) => s.getAll());
 }
 
+/** Togli una foto dalla coda. Chiamata da `deliver` quando il nodo l'ha presa,
+ *  e — dall'8 ottobre 2026 — da una persona che la scarta.
+ *
+ *  Misurato prima di aggiungere il gesto: questa funzione esisteva e **nessuna
+ *  persona la chiamava**. L'unico chiamante era `deliver`, dopo una consegna
+ *  riuscita, cioè la rimozione automatica sul successo. Il che vuol dire che la
+ *  coda era un posto dove si metteva e non si toglieva, e il 6 settembre è
+ *  costato una serata: il solo modo di togliere una foto era cancellare i dati
+ *  del sito, cioè buttare anche tutto il resto. */
 export function forget(id) {
   return tx("readwrite", (s) => s.delete(id));
 }
@@ -223,6 +236,9 @@ export function sentence(voci, t) {
 /** Disegna la striscia. Miniature e niente moduli: chi ha i guanti tocca una
  *  foto, non compila un campo. */
 export async function paint(host, seam, { proposeUs = () => "" } = {}) {
+  //: il dizionario è del seam, quindi la conferma si lega QUI e non al modulo:
+  //: `makeConfirm` prende `t` come argomento precisamente per questo
+  const { confirmTyped } = makeConfirm(seam.t);
   const voci = (await list()).sort((a, b) => b.at - a.at);
   host.textContent = "";
   host.hidden = voci.length === 0;
@@ -297,6 +313,36 @@ export async function paint(host, seam, { proposeUs = () => "" } = {}) {
     cambia.textContent = seam.t("photos.other");
     cambia.addEventListener("click", () => altro(voce));
     cella.append(cambia);
+
+    // ── SCARTARE · il verbo che mancava ───────────────────────────────────
+    //
+    // `forget` esisteva e nessuna persona la chiamava: l'unico chiamante era
+    // `deliver`, dopo una consegna riuscita. Quindi la coda era un posto dove
+    // si metteva e non si toglieva, e il 6 settembre è costato una serata —
+    // l'unico modo di togliere una foto era cancellare i dati del sito, cioè
+    // buttare anche tutto il resto.
+    //
+    // NON SI TORNA INDIETRO, e questo decide la conferma: i byte di questa
+    // foto stanno **solo su questo telefono**, non sono mai arrivati al nodo.
+    // Quindi `confirmTyped` e non `confirmNamed` (decisione del 7 ottobre; non
+    // ce n'è una terza), e quello che si scrive è il NOME DEL FILE, che è
+    // l'unica cosa di questa foto che una persona vede scritta — è quello che
+    // compare al posto della miniatura quando il browser non sa disegnarla.
+    //
+    // IL COSTO, dichiarato: con i guanti, scrivere `IMG_4821.HEIC` è un gesto
+    // difficile. È il prezzo dell'irreversibilità, e sta scritto nel referto
+    // dell'8 ottobre invece di essere risolto con una conferma più comoda.
+    const scarta = document.createElement("button");
+    scarta.type = "button";
+    scarta.className = "shot-drop";
+    scarta.textContent = seam.t("photos.drop");
+    scarta.title = seam.t("photos.drop.title", { name: voce.name });
+    scarta.addEventListener("click", async () => {
+      if (!confirmTyped(seam.t("photos.drop.ask"), voce.name)) return;
+      await forget(voce.id);
+      await ridisegna();
+    });
+    cella.append(scarta);
   }
   const detto = document.createElement("p");
   detto.className = "hint";

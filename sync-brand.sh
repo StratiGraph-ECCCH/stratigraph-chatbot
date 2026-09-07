@@ -45,6 +45,29 @@ for f in favicon-deep-charcoal.svg favicon-off-white.svg; do
   cp "$SRC/logo/$f" "$DST/logo/"
 done
 
+# ── E LA CONFERMA CONDIVISA ─────────────────────────────────────────────────
+#
+# `confirm.js` viene da `stratigraph-server/app/node_admin/`, dove è la
+# sorgente. Copiato per la stessa ragione del marchio — un browser non può
+# importare un modulo da un'altra origine senza CORS, e mettere CORS su un file
+# di codice per risparmiare una copia è un cattivo scambio.
+#
+# È senza dipendenze, ed è la condizione che lo rende copiabile: zero `import`,
+# e il dizionario arriva come argomento (`makeConfirm(t)`) precisamente perché
+# ogni superficie ha il suo. Stessa relazione dichiarata che ha col catalogo,
+# vendorizzato là il 7 ottobre.
+#
+# Perché serve qui: dall'8 ottobre una foto in coda si può SCARTARE, e i suoi
+# byte stanno solo su questo telefono — non si torna indietro. `confirmTyped`
+# chiede di scrivere il nome, e non ce n'è una terza (decisione del 7 ottobre).
+SHELL_SRC="$(cd "$HERE/.." && pwd)/stratigraph-server/app/node_admin"
+if [ -f "$SHELL_SRC/confirm.js" ]; then
+  cp "$SHELL_SRC/confirm.js" "$HERE/web/"
+  SHELL_SYNCED="confirm.js  (da stratigraph-server/app/node_admin)"
+else
+  SHELL_SYNCED="NON sincronizzato: stratigraph-server non è accanto a questo repo"
+fi
+
 fonts=$(ls -1 "$DST/fonts" | wc -l | tr -d ' ')
 bytes=$(du -sh "$DST" | cut -f1)
 version=$(grep -oE '^- `[0-9]+\.[0-9]+\.[0-9]+`' "$SRC/README.md" | head -1 \
@@ -55,4 +78,5 @@ synced the brand from $SRC:
   fonts            $fonts woff2 (Erode · IBM Plex Sans · IBM Plex Mono)
   logo             $(ls -1 "$DST/logo" | wc -l | tr -d ' ') svg
   vendored size    $bytes
+  shared module    $SHELL_SYNCED
 EOF

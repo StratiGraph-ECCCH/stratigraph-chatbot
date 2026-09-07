@@ -284,6 +284,21 @@
     background: none; color: var(--sg-accent-quiet);
     text-decoration: underline;
   }
+  /* SCARTARE — l'unico atto irreversibile di questa striscia, e non somiglia
+     agli altri due: `--sg-terracotta` è il token che il tema dà a un rifiuto, e
+     un verbo che butta via una fotografia non deve avere l'aspetto di «altro
+     numero».
+     Impilato e non affiancato: la cella è larga 104 px, e due bersagli di
+     cinquanta pixel uno accanto all'altro sono un tocco sbagliato con i
+     guanti. */
+  .shot-drop {
+    display: block;
+    width: auto; margin: 0; padding: 0 var(--sg-space-2) 5px;
+    font-size: var(--sg-text-xs); box-shadow: none;
+    background: none; color: var(--sg-terracotta);
+    text-decoration: none;
+  }
+  .shot-drop:active { background: var(--sg-surface-sunk); }
 
 
 /* ── cosa ci siamo detti ────────────────────────────────────────────────────
